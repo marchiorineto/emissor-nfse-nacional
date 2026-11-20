@@ -59,10 +59,14 @@ const readPipedLines = async (count) => {
   return lines
 }
 
-/** Sets `name=value` in the .env text, replacing the line if there is one. */
+/**
+ * Sets `name=value` in the .env text, replacing the line if there is one. Every line starting with exactly `name=` is
+ * rewritten (flag g): Node's .env parser keeps the last value of a repeated name, so a stale duplicate would stay in
+ * force. `.` stops before `\r`, which keeps CRLF endings; `NAME_OLD=` and commented lines never match.
+ */
 const setVar = (text, name, value) => {
   const line = `${name}=${value}`
-  const pattern = new RegExp(`^${name}=.*$`, 'm')
+  const pattern = new RegExp(`^${name}=.*$`, 'gm')
   return pattern.test(text) ? text.replace(pattern, () => line) : `${text}${text && !text.endsWith('\n') ? '\n' : ''}${line}\n`
 }
 
