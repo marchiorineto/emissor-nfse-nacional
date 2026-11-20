@@ -66,33 +66,58 @@ const layout = (title: string, content: Html, csrf?: string): Html => html`<!doc
   </body>
 </html>`
 
-/** The login form; the password field never carries a value, so it always comes back empty. */
-const loginPage = (error?: string): Html =>
+/**
+ * The login form; the password field never carries a value, so it always comes back empty. With an error the field points
+ * at it through aria-describedby, and `invalid` also marks the field aria-invalid, which Pico paints red together with the
+ * small that follows it (the 429 notice is not about the password, so it leaves `invalid` off).
+ */
+const loginPage = (error?: string, invalid = false): Html =>
   layout(
-    'Entrar - Emissor de NFS-e',
+    'Entrar – Emissor de NFS-e',
     html`<main>
-      <h1>Painel do emissor</h1>
+      <h1>Emissor de NFS-e</h1>
       <form method="post" action="/login">
-        <label>Senha
-          <input type="password" name="password" autocomplete="current-password" required autofocus>
-        </label>
-        ${error ? html`<p role="alert">${error}</p>` : ''}
+        <label for="password">Senha</label>
+        <input type="password" id="password" name="password" autocomplete="current-password" required autofocus${error ? html` aria-describedby="login-error"` : ''}${error && invalid ? html` aria-invalid="true"` : ''}>
+        ${error ? html`<small id="login-error" role="alert">${error}</small>` : ''}
         <button type="submit">Entrar</button>
       </form>
     </main>`,
   )
 
-/** The panel skeleton: issuer, environment badge, logout form and an empty area for the notas list. */
+/** The environment badge: produção is strong on the dark mark, anything else on the light mark, so the two always differ. */
+const environmentBadge = (environment: string): Html =>
+  environment === 'production'
+    ? html`<strong><mark data-theme="dark">${environmentLabel(environment)}</mark></strong>`
+    : html`<mark data-theme="light">${environmentLabel(environment)}</mark>`
+
+/**
+ * The panel skeleton: a nav header with issuer and environment badge on the left and logout on the right, then an empty area
+ * for the notas list. The Sair button has no type attribute on purpose: inside a form it submits anyway, and leaving it off
+ * keeps Pico's full-width and bottom-margin rules for typed submit buttons away, so it takes its content width in the nav.
+ */
 const adminPage = (cnpj: string, environment: string, csrf: string): Html =>
   layout(
     'Emissor de NFS-e',
     html`<header>
-        <h1>Emissor de NFS-e</h1>
-        <p>${cnpj} <mark>${environment}</mark></p>
-        <form method="post" action="/logout">
-          <input type="hidden" name="csrf" value="${csrf}">
-          <button type="submit">Sair</button>
-        </form>
+        <nav>
+          <ul>
+            <li>
+              <hgroup>
+                <h1>Emissor de NFS-e</h1>
+                <p>CNPJ ${cnpj} ${environmentBadge(environment)}</p>
+              </hgroup>
+            </li>
+          </ul>
+          <ul>
+            <li>
+              <form method="post" action="/logout">
+                <input type="hidden" name="csrf" value="${csrf}">
+                <button>Sair</button>
+              </form>
+            </li>
+          </ul>
+        </nav>
       </header>
       <main id="notas"></main>`,
     csrf,
@@ -158,7 +183,7 @@ export const registerAdmin = (app: Hono, { env, key, now }: AdminDeps): void => 
       const form = await c.req.parseBody().catch(() => ({}) as Record<string, unknown>)
       const password = typeof form.password === 'string' ? form.password : ''
       ok = await verifyPassword(password, env.ADMIN_PASSWORD)
-      if (!ok) return c.html(loginPage('Senha incorreta.'), 401)
+      if (!ok) return c.html(loginPage('Senha incorreta.', true), 401)
     } finally {
       throttle.end(ip, ok)
     }
@@ -197,6 +222,6 @@ export const registerAdmin = (app: Hono, { env, key, now }: AdminDeps): void => 
   app.get('/admin', (c) => {
     const session = sessionOf(getCookie(c, SESSION_COOKIE))
     if (!session) return c.redirect('/login', 303)
-    return c.html(adminPage(formatCnpj(env.ISSUER_CNPJ), environmentLabel(env.NFSE_ENVIRONMENT), csrfToken(key, session.id)))
+    return c.html(adminPage(formatCnpj(env.ISSUER_CNPJ), env.NFSE_ENVIRONMENT, csrfToken(key, session.id)))
   })
 }
