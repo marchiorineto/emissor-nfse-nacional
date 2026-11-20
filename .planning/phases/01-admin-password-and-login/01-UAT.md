@@ -3,7 +3,7 @@ status: diagnosed
 phase: 01-admin-password-and-login
 source: [01-VERIFICATION.md]
 started: 2026-11-20T20:35:00Z
-updated: 2026-11-20T20:30:44.500Z
+updated: 2026-11-20T21:15:17.000Z
 ---
 
 ## Current Test
@@ -26,12 +26,16 @@ result: issue
 reported: "styled but ugly, no console errors"
 severity: cosmetic
 
+### 4. Re-run UAT test 3 in a real browser after gap fix G-01-3
+expected: With ADMIN_PASSWORD set and `pnpm start`, at http://localhost:8080/login (light and dark OS scheme, desktop and a narrow window): content is centered with side gutters, not flush to the edges; a wrong password gives the field a red border with 'Senha incorreta.' in red under it; /admin has a nav header with a compact 'Sair' button on the right; the Produção and Homologação badges look different; the console shows no SRI or CSP error; the Network tab shows requests only to the app origin and cdn.jsdelivr.net; the page no longer looks 'ugly'
+result: [pending]
+
 ## Summary
 
-total: 3
+total: 4
 passed: 2
 issues: 1
-pending: 0
+pending: 1
 skipped: 0
 blocked: 0
 
