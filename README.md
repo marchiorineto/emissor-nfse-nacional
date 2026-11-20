@@ -121,6 +121,7 @@ Preencha o `.env`:
 | `DATABASE_PATH` | O arquivo do banco SQLite. O padrão é `data/emissor-nfse.db`; a pasta é criada sozinha. |
 | `PORT` | A porta da API. O padrão é `8080`. |
 | `PUBLIC_URL` | O endereço público da API, por exemplo `https://nfse.seudominio.com.br`, quando ela fica atrás de um proxy com HTTPS. É o endereço que vai nos links das notas. |
+| `ADMIN_PASSWORD` | O hash da senha do painel (`/admin`). Não escreva à mão: use `pnpm run admin-password` ([veja como](#criar-ou-trocar-a-senha)). Vazio desliga o painel. |
 
 ### 2. Adicione o certificado
 
@@ -215,9 +216,52 @@ As versões anteriores rodavam num Worker da Cloudflare, com o banco no D1. Para
    de antes, para os links já enviados continuarem valendo.
 4. Inicie o servidor. Ele reconhece o banco importado e não recria as tabelas.
 
+## Painel administrativo
+
+A página `/admin` é para uma pessoa só, que entra com uma senha. Os seus sistemas continuam usando o token da API,
+como antes.
+
+### Criar ou trocar a senha
+
+```sh
+pnpm run admin-password
+```
+
+O script pede a senha duas vezes, sem mostrá-la na tela, exige pelo menos 12 caracteres e grava no `.env` só um hash
+scrypt em `ADMIN_PASSWORD`. Se o `.env` não existir, ele o cria a partir do `.env.example`. Sem terminal, passe a senha
+pela entrada do script:
+
+```sh
+printf '%s\n%s\n' "$SENHA" "$SENHA" | pnpm run admin-password
+```
+
+Reinicie o servidor depois: é a reinicialização que liga o painel. Trocar a senha também encerra as sessões abertas,
+quando o servidor reinicia.
+
+No Docker, a imagem não traz a pasta `scripts/`. Rode o script na sua máquina, com o mesmo `.env`, e recrie o container
+com `--env-file .env`.
+
+### Entrar e sair
+
+Abra `/login` (por exemplo, http://localhost:8080/login). A senha certa leva ao `/admin`. A sessão dura 12 horas a
+partir do login, sem renovação. O botão "Sair" apaga a sessão deste navegador.
+
+Uma senha errada mostra "Senha incorreta.", e as tentativas erradas seguidas do mesmo endereço esperam cada vez mais,
+de 1 até 30 segundos.
+
+### Atrás de um proxy
+
+Com HTTPS (`PUBLIC_URL` em `https://` ou o cabeçalho `X-Forwarded-Proto`), o cookie sai com `Secure`.
+
+O proxy precisa acrescentar o endereço do visitante ao `X-Forwarded-For`. O Caddy faz isso sozinho; no nginx, use
+`proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`. Sem proxy, esse cabeçalho pode ser forjado, e a espera
+entre as tentativas perde o efeito.
+
 ## API
 
-Todas as rotas pedem o cabeçalho `Authorization: Bearer <API_TOKEN>`, menos os links públicos das notas.
+Todas as rotas pedem o cabeçalho `Authorization: Bearer <API_TOKEN>`, menos os links públicos das notas. O painel chama
+as mesmas rotas com o cookie da sessão, sem conhecer o token, e manda o cabeçalho `X-CSRF-Token` nas chamadas que não
+são GET. Quando o cabeçalho `Authorization` está presente, só o token vale, como antes.
 
 | Rota | O que faz |
 |---|---|
@@ -392,6 +436,8 @@ container com o `.env` novo. Confira a validade em `GET /health` (`certificate.n
 | Nota recusada com `E0038` ou `E0039` | O convênio do município não está ativo, ou a prefeitura usa sistema próprio e o seu caso não é MEI nem ME/EPP com o ISS apurado pelo Simples. Veja [Municípios](docs/municipios.md). |
 | Nota recusada com `E0312` | A prefeitura não tem esse código de serviço parametrizado na data de competência. Confira o `serviceCode`; se estiver certo, fale com a prefeitura. |
 | Nota parada em `unknown` | O governo não respondeu. Envie o mesmo pedido mais tarde; se continuar assim, veja o `/health`. |
+| `/login` responde 404 | O `ADMIN_PASSWORD` está vazio: rode `pnpm run admin-password` e reinicie o servidor. |
+| O log mostra `ADMIN_PASSWORD is not a valid hash` | Rode `pnpm run admin-password` de novo e reinicie o servidor. |
 
 As outras rejeições ligadas a município, regime e serviço estão em [Rejeições](docs/rejeicoes.md).
 
@@ -435,6 +481,11 @@ Contribuições são bem-vindas: abra uma issue ou um pull request, com `pnpm te
 - O certificado e a senha ficam no `.env`, que o script grava com permissão só para o dono do arquivo. O `.gitignore`
   bloqueia o `.env` e os arquivos `.pfx`, `.p12`, `.pem` e `.key`; nunca coloque esses arquivos no repositório.
 - Os links públicos das notas são assinados com uma chave derivada do token.
+- A senha do painel fica no `.env` só como hash scrypt com sal.
+- A sessão do painel é um cookie `HttpOnly` e `SameSite=Strict`, com `Secure` em HTTPS, que vale 12 horas.
+- Sair apaga o cookie deste navegador, mas uma cópia dele continua valendo até expirar.
+- Quem lê o `.env` pode criar sessões do painel, como já pode usar o `API_TOKEN`; por isso o arquivo fica só com
+  permissão do dono.
 
 ## Aviso
 
