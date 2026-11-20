@@ -26,12 +26,43 @@ export const PICO_CSS_URL = 'https://cdn.jsdelivr.net/npm/@picocss/pico@2.1.1/cs
 export const PICO_CSS_INTEGRITY = 'sha384-NZhm4G1I7BpEGdjDKnzEfy3d78xvy7ECKUwwnKTYi036z42IyF056PbHfpQLIYgL'
 
 /**
- * The Content-Security-Policy of every panel page: styles only from jsDelivr (Pico), scripts only from this origin (room
+ * The panel's own few rules on top of Pico, served from this origin at /panel.css (inline styles stay blocked by the CSP).
+ * A `main[data-card]` page (login and refusals) shows one narrow card centered on the screen instead of a page-wide form.
+ */
+export const PANEL_CSS = `main[data-card] {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding-block: 2rem;
+}
+main[data-card] > article {
+  width: 100%;
+  max-width: 24rem;
+  margin: 0;
+}
+main[data-card] > article > header h1 {
+  font-size: 1.5rem;
+  margin-bottom: 0.25rem;
+}
+main[data-card] > article > header p {
+  margin: 0;
+  color: var(--pico-muted-color);
+}
+main[data-card] form,
+main[data-card] form > button:last-child,
+main[data-card] > article > p:last-child {
+  margin-bottom: 0;
+}
+`
+
+/**
+ * The Content-Security-Policy of every panel page: styles only from jsDelivr (Pico) and this origin (/panel.css), scripts only from this origin (room
  * for a Phase 2 script route), images from this origin plus data: (Pico embeds data: SVG icons), forms posting only here,
  * no framing, no base tag (D-12).
  */
 export const PAGE_CSP =
-  "default-src 'none'; style-src https://cdn.jsdelivr.net; img-src 'self' data:; script-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
+  "default-src 'none'; style-src 'self' https://cdn.jsdelivr.net; img-src 'self' data:; script-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
 
 export interface AdminDeps {
   env: Env
@@ -59,6 +90,7 @@ const layout = (title: string, content: Html, csrf?: string): Html => html`<!doc
     <meta name="color-scheme" content="light dark">
     <title>${title}</title>
     <link rel="stylesheet" href="${PICO_CSS_URL}" integrity="${PICO_CSS_INTEGRITY}" crossorigin="anonymous">
+    <link rel="stylesheet" href="/panel.css">
     ${csrf ? html`<meta name="csrf-token" content="${csrf}">` : ''}
   </head>
   <body>
@@ -74,14 +106,19 @@ const layout = (title: string, content: Html, csrf?: string): Html => html`<!doc
 const loginPage = (error?: string, invalid = false): Html =>
   layout(
     'Entrar – Emissor de NFS-e',
-    html`<main>
-      <h1>Emissor de NFS-e</h1>
-      <form method="post" action="/login">
-        <label for="password">Senha</label>
-        <input type="password" id="password" name="password" autocomplete="current-password" required autofocus${error ? html` aria-describedby="login-error"` : ''}${error && invalid ? html` aria-invalid="true"` : ''}>
-        ${error ? html`<small id="login-error" role="alert">${error}</small>` : ''}
-        <button type="submit">Entrar</button>
-      </form>
+    html`<main data-card>
+      <article>
+        <header>
+          <h1>Emissor de NFS-e</h1>
+          <p>Painel administrativo</p>
+        </header>
+        <form method="post" action="/login">
+          <label for="password">Senha</label>
+          <input type="password" id="password" name="password" autocomplete="current-password" required autofocus${error ? html` aria-describedby="login-error"` : ''}${error && invalid ? html` aria-invalid="true"` : ''}>
+          ${error ? html`<small id="login-error" role="alert">${error}</small>` : ''}
+          <button type="submit">Entrar</button>
+        </form>
+      </article>
     </main>`,
   )
 
@@ -127,9 +164,13 @@ const adminPage = (cnpj: string, environment: string, csrf: string): Html =>
 const refusalPage = (heading: string, href: '/login' | '/admin', label: string): Html =>
   layout(
     `${heading} – Emissor de NFS-e`,
-    html`<main>
-      <h1>${heading}</h1>
-      <p><a href="${href}">${label}</a></p>
+    html`<main data-card>
+      <article>
+        <header>
+          <h1>${heading}</h1>
+        </header>
+        <p><a href="${href}">${label}</a></p>
+      </article>
     </main>`,
   )
 
@@ -176,6 +217,9 @@ export const registerAdmin = (app: Hono, { env, key, now }: AdminDeps): void => 
   app.use('/login', pageHeaders)
   app.use('/logout', pageHeaders)
   app.use('/admin/*', pageHeaders)
+  app.use('/panel.css', pageHeaders)
+
+  app.get('/panel.css', (c) => c.body(PANEL_CSS, 200, { 'Content-Type': 'text/css; charset=utf-8' }))
 
   app.get('/login', (c) => (sessionOf(getCookie(c, SESSION_COOKIE)) ? c.redirect('/admin', 303) : c.html(loginPage())))
 

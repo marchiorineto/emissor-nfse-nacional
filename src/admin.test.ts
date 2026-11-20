@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
-import { PAGE_CSP, PICO_CSS_INTEGRITY, PICO_CSS_URL } from './admin.ts'
+import { PAGE_CSP, PANEL_CSS, PICO_CSS_INTEGRITY, PICO_CSS_URL } from './admin.ts'
 import { createApp } from './app.ts'
 import { envFrom } from './env.ts'
 import type { Gov, GovResult } from './notas.ts'
@@ -148,6 +148,7 @@ describe('admin guard and logout', () => {
       await app.request('http://api.test/login'),
       await login(app, PASSWORD),
       await app.request('http://api.test/admin'),
+      await app.request('http://api.test/panel.css'),
       await logout(app, {}, 'x'),
     ]
     for (const res of responses) {
@@ -343,7 +344,7 @@ describe('panel security headers', () => {
     expect(PICO_CSS_URL).toBe('https://cdn.jsdelivr.net/npm/@picocss/pico@2.1.1/css/pico.classless.min.css')
     expect(PICO_CSS_INTEGRITY).toMatch(/^sha384-[A-Za-z0-9+/]{64}$/)
     expect(PAGE_CSP).toBe(
-      "default-src 'none'; style-src https://cdn.jsdelivr.net; img-src 'self' data:; script-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+      "default-src 'none'; style-src 'self' https://cdn.jsdelivr.net; img-src 'self' data:; script-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
     )
   })
 
@@ -369,6 +370,24 @@ describe('panel security headers', () => {
       expect(body).not.toMatch(/\s(class|style)=/)
       const urls = [...body.matchAll(/(?:src|href)="(https?:\/\/[^"]+)"/g)].map((match) => match[1])
       expect(urls).toEqual([PICO_CSS_URL])
+      expect(body).toContain('<link rel="stylesheet" href="/panel.css">')
+    }
+  })
+
+  it('serves /panel.css from this origin as text/css with the panel headers', async () => {
+    const res = await setup().request('http://api.test/panel.css')
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toBe('text/css; charset=utf-8')
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff')
+    expect(await res.text()).toBe(PANEL_CSS)
+  })
+
+  it('shows login and refusals as one narrow centered card', async () => {
+    expect(PANEL_CSS).toMatch(/main\[data-card\] \{[^}]*place-items: center/)
+    expect(PANEL_CSS).toMatch(/main\[data-card\] > article \{[^}]*max-width: 24rem/)
+    const app = setup()
+    for (const res of [await app.request('http://api.test/login'), await rawLogin(app, PASSWORD, { 'sec-fetch-site': 'cross-site' })]) {
+      expect(await res.text()).toMatch(/<main data-card>\s*<article>\s*<header>\s*<h1>/)
     }
   })
 })
