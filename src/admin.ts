@@ -264,6 +264,18 @@ const adminPage = (cnpj: string, environment: string, csrf: string): Html =>
         </table>
         <button type="button" id="more" hidden>Carregar mais</button>
       </main>
+      <dialog id="nota-dialog" aria-labelledby="nota-title">
+        <article>
+          <header>
+            <h2 id="nota-title"></h2>
+            <p id="nota-status"></p>
+          </header>
+          <div id="nota-body"></div>
+          <footer>
+            <form method="dialog"><button>Fechar</button></form>
+          </footer>
+        </article>
+      </dialog>
       <script type="module" src="/admin/panel.js"></script>`,
     csrf,
   )

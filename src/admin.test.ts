@@ -428,6 +428,11 @@ describe('panel security headers', () => {
       ['unknown', 'Sem resposta'],
     ])
     expect(body).toContain('<button type="button" id="more" hidden>Carregar mais</button>')
+    expect(body).toContain('<dialog id="nota-dialog" aria-labelledby="nota-title">')
+    expect(body).toContain('<h2 id="nota-title"></h2>')
+    expect(body).toContain('<p id="nota-status"></p>')
+    expect(body).toContain('<div id="nota-body"></div>')
+    expect(body).toContain('<form method="dialog"><button>Fechar</button></form>')
     expect(body).toMatch(
       /<th[^>]*>Competência<\/th>\s*<th[^>]*>Cliente<\/th>\s*<th[^>]*>Valor<\/th>\s*<th[^>]*>Número<\/th>\s*<th[^>]*>Situação<\/th>\s*<th[^>]*>PDF<\/th>/,
     )

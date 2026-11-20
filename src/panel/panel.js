@@ -1,12 +1,16 @@
 // The panel's browser module: reads GET /v1/notas with the session cookie and renders the list.
 // Every API string reaches the DOM through textContent; nothing here ever parses markup or sets a style.
-import { formatBrl, hasMore, isAlertStatus, listDate, listQuery, numberCell, parseStatus, pdfFilename, pdfHref, statusLabel, statusSearch, takerCell } from './format.js'
+import { formatBrl, hasMore, isAlertStatus, listDate, listQuery, notaHash, numberCell, parseNotaHash, parseStatus, pdfFilename, pdfHref, statusLabel, statusSearch, takerCell } from './format.js'
 
 const body = document.getElementById('notas-body')
 const state = document.getElementById('notas-state')
 const table = body.closest('table')
 const select = document.getElementById('status')
 const more = document.getElementById('more')
+const dialog = document.getElementById('nota-dialog')
+const dialogTitle = document.getElementById('nota-title')
+const dialogStatus = document.getElementById('nota-status')
+const dialogBody = document.getElementById('nota-body')
 
 /** Fetches a /v1 path with the session cookie as the only credential; a 401 sends the browser to the login. */
 const api = async (path) => {
@@ -52,9 +56,10 @@ const renderRow = (nota) => {
 
   const number = numberCell(nota)
   const numberTd = cell('Número')
-  const numberText = text('span', number.text)
-  if (number.muted) numberText.dataset.muted = ''
-  numberTd.append(numberText)
+  const numberLink = text('a', number.text)
+  numberLink.href = notaHash(nota.id)
+  if (number.muted) numberLink.dataset.muted = ''
+  numberTd.append(numberLink)
   tr.append(numberTd)
 
   const situation = cell('Situação')
@@ -85,8 +90,10 @@ const say = (message) => {
 /**
  * What the list shows now: the status filter taken from the URL, the cursor after the last row shown, and a counter that
  * retires responses of older loads (a filter change bumps it, so an in-flight page of the old filter is never appended).
+ * `nota` is the id the dialog shows ('' when closed), taken from the URL hash, and `dialogGeneration` retires the response of
+ * a nota the admin has already left.
  */
-const view = { status: null, last: null, generation: 0 }
+const view = { status: null, last: null, generation: 0, nota: '', dialogGeneration: 0 }
 
 /** Loads one page of the current filter: the newest one (replacing the rows) or, appending, the page after the last row shown. */
 const loadPage = async ({ append }) => {
@@ -119,20 +126,79 @@ const loadPage = async ({ append }) => {
   }
 }
 
-/** Brings the list in line with the URL, the one source of truth for the filter; does nothing when the filter is unchanged. */
+/** Renders what the dialog shows for a nota that was fetched. */
+const renderNota = (nota) => {
+  const number = numberCell(nota)
+  dialogTitle.textContent = number.text
+  const label = text(isAlertStatus(nota.status) ? 'strong' : 'span', statusLabel(nota.status))
+  label.dataset.status = nota.status
+  dialogStatus.replaceChildren(label)
+
+  const section = document.createElement('section')
+  section.append(text('h3', 'Resumo'))
+  const list = document.createElement('dl')
+  for (const [name, value] of [
+    ['Situação', statusLabel(nota.status)],
+    ['Valor', formatBrl(nota.request.valueCents)],
+    ['Identificador', nota.id],
+  ]) {
+    list.append(text('dt', name), text('dd', value))
+  }
+  section.append(list)
+  dialogBody.replaceChildren(section)
+}
+
+/** Opens the dialog on a nota: shows it at once as loading, then fills it with GET /v1/notas/<id>; a stale response is dropped. */
+const openNota = async (id) => {
+  const generation = ++view.dialogGeneration
+  dialogTitle.textContent = 'Carregando nota…'
+  dialogStatus.replaceChildren()
+  dialogBody.replaceChildren()
+  if (!dialog.open) dialog.showModal()
+  try {
+    const nota = await api(`/v1/notas/${encodeURIComponent(id)}`)
+    if (generation !== view.dialogGeneration) return
+    renderNota(nota)
+  } catch (error) {
+    if (generation !== view.dialogGeneration) return
+    if (error instanceof Error && error.message === 'unauthorized') return
+    dialogTitle.textContent = error instanceof Error && error.message === 'HTTP 404' ? 'Nota não encontrada.' : 'Não foi possível carregar a nota. Tente de novo.'
+  }
+}
+
+/** Brings the list and the dialog in line with the URL, the one source of truth for both; does nothing for what is unchanged. */
 const sync = () => {
   const status = parseStatus(location.search)
-  if (status === view.status) return
-  view.status = status
-  select.value = status
-  loadPage({ append: false })
+  if (status !== view.status) {
+    view.status = status
+    select.value = status
+    loadPage({ append: false })
+  }
+  const id = parseNotaHash(location.hash)
+  if (id !== view.nota) {
+    view.nota = id
+    if (id) openNota(id)
+    else if (dialog.open) {
+      view.dialogGeneration++
+      dialog.close()
+    }
+  }
 }
+
+// Fechar, Esc or sync closing the dialog: forget the nota and drop the hash. replaceState fires no event and never leaves a bare #.
+dialog.addEventListener('close', () => {
+  if (dialog.open) return
+  view.nota = ''
+  view.dialogGeneration++
+  if (parseNotaHash(location.hash) !== '') history.replaceState(null, '', location.pathname + location.search)
+})
 
 select.addEventListener('change', () => {
   history.pushState(null, '', location.pathname + statusSearch(select.value))
   sync()
 })
 window.addEventListener('popstate', sync)
+window.addEventListener('hashchange', sync)
 more.addEventListener('click', () => loadPage({ append: true }))
 
 sync()

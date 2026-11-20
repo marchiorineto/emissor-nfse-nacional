@@ -97,3 +97,9 @@ export const pdfHref = (nota) => (nota.accessKey ? `/v1/notas/${encodeURICompone
 
 /** The name the PDF is saved as, the same one the server's download answer carries: nfse-<NFS-e number, else DPS number>.pdf. */
 export const pdfFilename = (nota) => `nfse-${nota.nfseNumber ?? nota.dpsNumber}.pdf`
+
+/** The id a URL hash names (#nota=<id>), or '' when there is none; a malformed hash never throws. */
+export const parseNotaHash = (hash) => new URLSearchParams(hash.replace(/^#/, '')).get('nota') ?? ''
+
+/** The URL hash that opens a nota: '#nota=<id>', the id encoded by URLSearchParams so any character round-trips. */
+export const notaHash = (id) => `#${new URLSearchParams({ nota: id })}`

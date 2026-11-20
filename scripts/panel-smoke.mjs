@@ -257,6 +257,12 @@ const waitFor = async (expression, timeoutMs = 8000) => {
 
 /** Opens a URL and waits for the document to finish loading; clears what was recorded before. */
 const goto = async (url) => {
+  // A URL that differs from the open document only by its hash is a same-document navigation: leave through about:blank so it is a real load.
+  const current = await evaluate('location.href').catch(() => '')
+  if (typeof current === 'string' && current.split('#')[0] === url.split('#')[0]) {
+    await page('Page.navigate', { url: 'about:blank' })
+    await waitFor(`location.href === 'about:blank'`)
+  }
   consoleErrors = []
   v1Requests = []
   extraInfo.clear()
@@ -528,6 +534,77 @@ await check('pdf-row-download', async () => {
   assert(started?.suggestedFilename === expected, `download starts as "${started?.suggestedFilename}", expected ${expected}`)
   assert((await evaluate('location.pathname')) === '/admin', 'the page left /admin')
   assert(createdTargets.length === before.targets, `a new target opened: ${createdTargets.slice(before.targets).map((t) => `${t.type} ${t.url}`).join(', ')}`)
+  assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
+})
+
+/** Whether the nota dialog is open, and the title and status it shows. */
+const dialogOpen = () => evaluate(`document.getElementById('nota-dialog').open`)
+const dialogTitle = () => evaluate(`document.getElementById('nota-title').textContent`)
+
+/** Opens the nota of the first row whose data-status matches (or the first row) through its Número link, as a click does. */
+const openFromRow = async (status) => {
+  await evaluate(`document.querySelector('#notas-body tr${status ? `[data-status="${status}"]` : ''} a:not([download])').click()`)
+  await waitFor(`location.hash.startsWith('#nota=') && document.getElementById('nota-dialog').open`)
+}
+
+/** Presses and releases a key in the page. */
+const pressKey = async (key, code, keyCode) => {
+  for (const type of ['keyDown', 'keyUp']) await page('Input.dispatchKeyEvent', { type, key, code, windowsVirtualKeyCode: keyCode })
+}
+
+await check('dialog-deep-link', async () => {
+  const all = fixtures()
+  const rejected = all.find((nota) => nota.status === 'rejected')
+  await viewport(1280, false)
+  await goto(`${main.origin}/admin?status=rejected#nota=${encodeURIComponent(rejected.id)}`)
+  await waitFor(`document.getElementById('nota-title').textContent === 'DPS ${rejected.dpsNumber}'`)
+  assert(await dialogOpen(), 'the dialog is not open for a deep link')
+  await waitForOnly('rejected')
+  assert((await evaluate(`document.getElementById('status').value`)) === 'rejected', 'the select does not show rejected')
+  const detail = v1Requests.filter((r) => r.url.pathname === `/v1/notas/${rejected.id}`)
+  assert(detail.length === 1, `expected 1 request for the nota, saw ${detail.length}`)
+  const oldest = all[all.length - 1]
+  await goto(`${main.origin}/admin#nota=${encodeURIComponent(oldest.id)}`)
+  await waitFor(`document.getElementById('nota-title').textContent === 'NFS-e ${oldest.nfseNumber}'`)
+  assert(await dialogOpen(), 'the dialog is not open for a nota beyond the first page')
+  assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
+})
+
+await check('dialog-close', async () => {
+  await goto(`${main.origin}/admin`)
+  await waitFor(`document.querySelectorAll('#notas-body tr').length === 20`)
+  await openFromRow()
+  assert(await dialogOpen(), 'the dialog did not open from the row link')
+  await evaluate(`document.querySelector('#nota-dialog form button').click()`)
+  await waitFor(`!document.getElementById('nota-dialog').open && location.hash === ''`)
+  assert(!(await evaluate('location.href')).endsWith('#'), 'closing left a bare # in the URL')
+  await openFromRow()
+  await pressKey('Escape', 'Escape', 27)
+  await waitFor(`!document.getElementById('nota-dialog').open && location.hash === ''`)
+  assert(!(await evaluate('location.href')).endsWith('#'), 'Esc left a bare # in the URL')
+  assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
+})
+
+await check('dialog-back', async () => {
+  await goto(`${main.origin}/admin`)
+  await waitFor(`document.querySelectorAll('#notas-body tr').length === 20`)
+  await clickMore()
+  await waitFor(`document.querySelectorAll('#notas-body tr').length === 40`)
+  const lists = () => v1Requests.filter((r) => r.url.pathname === '/v1/notas').length
+  const before = lists()
+  await openFromRow()
+  await evaluate('history.back()')
+  await waitFor(`!document.getElementById('nota-dialog').open && location.hash === ''`)
+  const rows = await evaluate(`document.querySelectorAll('#notas-body tr').length`)
+  assert(rows === 40, `${rows} rows after Back, expected 40`)
+  assert(lists() === before, `Back sent ${lists() - before} new list request(s)`)
+  assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
+})
+
+await check('dialog-unknown', async () => {
+  await goto(`${main.origin}/admin#nota=nao-existe`)
+  await waitFor(`document.getElementById('nota-title').textContent === 'Nota não encontrada.'`)
+  assert(await dialogOpen(), 'the dialog is not open for an unknown id')
   assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
 })
 

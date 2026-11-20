@@ -41,3 +41,7 @@ export function hasMore(count: number): boolean
 export function pdfHref(nota: Pick<NotaView, 'id' | 'accessKey'>): string | undefined
 /** The file name the download is saved as: nfse-<NFS-e number, else DPS number>.pdf. */
 export function pdfFilename(nota: Pick<NotaView, 'nfseNumber' | 'dpsNumber'>): string
+/** The id a URL hash (#nota=<id>) names, or '' when there is none; never throws. */
+export function parseNotaHash(hash: string): string
+/** The URL hash that opens a nota: '#nota=<id>' with the id encoded. */
+export function notaHash(id: string): string
