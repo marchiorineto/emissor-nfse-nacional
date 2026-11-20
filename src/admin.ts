@@ -55,6 +55,79 @@ main[data-card] form > button:last-child,
 main[data-card] > article > p:last-child {
   margin-bottom: 0;
 }
+#notas td {
+  overflow-wrap: anywhere;
+}
+#notas-body td [data-status="rejected"],
+#notas-body td [data-status="unknown"] {
+  color: var(--pico-del-color);
+  font-weight: 600;
+}
+#notas-body td [data-status="issued"] {
+  color: var(--pico-ins-color);
+}
+#notas-body td [data-status="canceled"],
+#notas-body td [data-status="replaced"],
+#notas-body td [data-status="pending"] {
+  color: var(--pico-muted-color);
+}
+#notas-body tr[data-status="rejected"] > td:first-child,
+#notas-body tr[data-status="unknown"] > td:first-child {
+  box-shadow: inset 0.25rem 0 0 var(--pico-del-color, currentColor);
+}
+#notas-body small {
+  display: block;
+  color: var(--pico-muted-color);
+}
+#notas-body [data-muted] {
+  color: var(--pico-muted-color);
+}
+@media (max-width: 767px) {
+  #notas table,
+  #notas thead,
+  #notas tbody,
+  #notas tr,
+  #notas th,
+  #notas td {
+    display: block;
+  }
+  #notas thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  #notas tbody tr {
+    border: var(--pico-border-width) solid var(--pico-muted-border-color);
+    border-radius: var(--pico-border-radius);
+    margin-bottom: var(--pico-spacing);
+    padding: var(--pico-spacing);
+  }
+  #notas td {
+    border: 0;
+    padding: 0.25rem 0;
+  }
+  #notas td::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 0.75rem;
+    font-weight: 400;
+    color: var(--pico-muted-color);
+  }
+  #notas td:empty {
+    display: none;
+  }
+  #notas-body tr[data-status="rejected"],
+  #notas-body tr[data-status="unknown"] {
+    border-left: 0.25rem solid var(--pico-del-color, currentColor);
+  }
+  #notas-body tr[data-status="rejected"] > td:first-child,
+  #notas-body tr[data-status="unknown"] > td:first-child {
+    box-shadow: none;
+  }
+}
 `
 
 /**

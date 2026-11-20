@@ -12,7 +12,7 @@
 // Exit status: 0 when every check passed (and at least one ran), 1 otherwise, 2 when Chrome does not start.
 import { spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { serve } from '@hono/node-server'
@@ -115,6 +115,8 @@ const scenario = async ({ notas = [], failList = false } = {}) => {
     ADMIN_PASSWORD: hash,
   })
   const app = createApp({ env, repo, gov, certificate: () => ({ error: 'none' }) })
+  // The failing scenario answers its 500 quietly, so the run output stays readable.
+  if (failList) app.onError((_error, c) => c.json({ error: 'boom' }, 500))
   const server = serve({ fetch: app.fetch, port: 0, hostname: '127.0.0.1' })
   servers.push(server)
   await new Promise((resolve) => server.once('listening', resolve))
@@ -122,6 +124,8 @@ const scenario = async ({ notas = [], failList = false } = {}) => {
 }
 
 const main = await scenario({ notas: fixtures() })
+const empty = await scenario()
+const failing = await scenario({ notas: fixtures(), failList: true })
 
 // (c) The real login: the cookie Chrome gets is the one the server issued.
 const loginRes = await fetch(`${main.origin}/login`, {
@@ -235,12 +239,26 @@ const goto = async (url) => {
   consoleErrors = []
   v1Requests = []
   extraInfo.clear()
+  // A marker on the old document tells a finished navigation from a document that is still the previous one.
+  await evaluate('window.__stale = true').catch(() => {})
   await page('Page.navigate', { url })
-  await waitFor(`location.href === ${JSON.stringify(url)} && document.readyState === 'complete'`)
+  await waitFor(`location.href === ${JSON.stringify(url)} && document.readyState === 'complete' && !window.__stale`)
 }
 
 /** Rows of the list as arrays of cell texts. */
 const rowTexts = () => evaluate(`[...document.querySelectorAll('#notas-body tr')].map((tr) => [...tr.children].map((td) => td.textContent))`)
+
+/** Sets the viewport: a phone (mobile) or a desktop window. */
+const viewport = (width, mobile) => page('Emulation.setDeviceMetricsOverride', { width, height: 800, deviceScaleFactor: 1, mobile })
+
+/** Saves a screenshot of the page when PANEL_SMOKE_SHOTS names a directory. */
+const shot = async (name) => {
+  const dir = process.env.PANEL_SMOKE_SHOTS
+  if (!dir) return
+  mkdirSync(dir, { recursive: true })
+  const { data } = await page('Page.captureScreenshot', { format: 'png' })
+  writeFileSync(join(dir, name), Buffer.from(data, 'base64'))
+}
 
 const results = []
 const check = async (name, fn) => {
@@ -283,6 +301,67 @@ await check('list-renders', async () => {
   for (let wait = 0; wait < 40 && !extraInfo.has(request?.requestId ?? ''); wait++) await new Promise((resolve) => setTimeout(resolve, 50))
   const extra = extraInfo.get(request?.requestId ?? '') ?? {}
   assert(/nfse_admin=/.test(Object.entries(extra).find(([name]) => name.toLowerCase() === 'cookie')?.[1] ?? ''), 'the request does not carry the session cookie')
+  assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
+})
+
+await check('list-status-emphasis', async () => {
+  await viewport(1280, false)
+  await goto(`${main.origin}/admin`)
+  await waitFor(`document.querySelectorAll('#notas-body tr').length === 20`)
+  const found = await evaluate(`(() => {
+    const weight = (el) => Number(getComputedStyle(el).fontWeight)
+    const alerts = [...document.querySelectorAll('#notas-body td [data-status="rejected"], #notas-body td [data-status="unknown"]')]
+    const issued = document.querySelector('#notas-body td span[data-status="issued"]')
+    const accent = document.querySelector('#notas-body tr[data-status="rejected"] > td:first-child')
+    return { alerts: alerts.map(weight), issued: issued ? weight(issued) : null, shadow: accent ? getComputedStyle(accent).boxShadow : null }
+  })()`)
+  assert(found.alerts.length > 0, 'no rejected or unknown status label in the list')
+  assert(found.alerts.every((w) => w >= 600), `alert labels have weights ${found.alerts.join(',')}, expected >= 600`)
+  assert(found.issued !== null && found.issued < 600, `issued label weight is ${found.issued}, expected below 600`)
+  assert(found.shadow !== null && found.shadow !== 'none', `the rejected row has no left accent (box-shadow ${found.shadow})`)
+  await shot('list-wide.png')
+})
+
+await check('list-cards-narrow', async () => {
+  await viewport(375, true)
+  await goto(`${main.origin}/admin`)
+  await waitFor(`document.querySelectorAll('#notas-body tr').length === 20`)
+  const narrow = await evaluate(`(() => {
+    const row = document.querySelector('#notas-body tr')
+    const cells = [...row.children].filter((td) => td.textContent !== '')
+    return {
+      display: getComputedStyle(row).display,
+      headHeight: document.querySelector('#notas thead').getBoundingClientRect().height,
+      labels: cells.map((td) => [getComputedStyle(td, '::before').content, '"' + td.dataset.label + '"']),
+      scrollWidth: document.documentElement.scrollWidth,
+    }
+  })()`)
+  assert(narrow.display === 'block', `row display is ${narrow.display} at 375 px, expected block`)
+  assert(narrow.headHeight <= 1, `the table head is ${narrow.headHeight}px high, expected at most 1`)
+  assert(narrow.labels.length >= 5, `only ${narrow.labels.length} non-empty cells`)
+  for (const [content, label] of narrow.labels) assert(content === label, `cell label is ${content}, expected ${label}`)
+  assert(narrow.scrollWidth <= 375, `the page scrolls sideways: scrollWidth ${narrow.scrollWidth} at 375 px`)
+  await shot('list-narrow.png')
+  await viewport(1280, false)
+  await goto(`${main.origin}/admin`)
+  await waitFor(`document.querySelectorAll('#notas-body tr').length === 20`)
+  const wide = await evaluate(`getComputedStyle(document.querySelector('#notas-body tr')).display`)
+  assert(wide === 'table-row', `row display is ${wide} at 1280 px, expected table-row`)
+})
+
+await check('list-empty', async () => {
+  await goto(`${empty.origin}/admin`)
+  await waitFor(`document.getElementById('notas-state').textContent === 'Nenhuma nota encontrada.'`)
+  const rows = await evaluate(`document.querySelectorAll('#notas-body tr').length`)
+  assert(rows === 0, `${rows} rows in an empty list`)
+  assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
+})
+
+await check('list-error', async () => {
+  await goto(`${failing.origin}/admin`)
+  await waitFor(`document.getElementById('notas-state').textContent === 'Não foi possível carregar as notas. Tente de novo.'`)
+  const rows = await evaluate(`document.querySelectorAll('#notas-body tr').length`)
+  assert(rows === 0, `${rows} rows after a failed load`)
   assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
 })
 

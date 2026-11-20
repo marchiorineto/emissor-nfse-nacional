@@ -420,6 +420,15 @@ describe('panel security headers', () => {
     )
   })
 
+  it('styles the notas list for status and narrow screens in /panel.css', () => {
+    expect(PANEL_CSS).toMatch(/\[data-status="rejected"\][^{]*\{[^}]*--pico-del-color/)
+    expect(PANEL_CSS).toContain('@media (max-width: 767px)')
+    expect(PANEL_CSS).toContain('attr(data-label)')
+    expect(PANEL_CSS).toContain('font-weight: 600')
+    expect(PANEL_CSS).toMatch(/main\[data-card\] \{[^}]*place-items: center/)
+    expect(PANEL_CSS).toMatch(/main\[data-card\] > article \{[^}]*max-width: 24rem/)
+  })
+
   it('shows login and refusals as one narrow centered card', async () => {
     expect(PANEL_CSS).toMatch(/main\[data-card\] \{[^}]*place-items: center/)
     expect(PANEL_CSS).toMatch(/main\[data-card\] > article \{[^}]*max-width: 24rem/)

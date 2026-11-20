@@ -4,6 +4,7 @@ import { formatBrl, isAlertStatus, listDate, listQuery, numberCell, statusLabel,
 
 const body = document.getElementById('notas-body')
 const state = document.getElementById('notas-state')
+const table = body.closest('table')
 
 /** Fetches a /v1 path with the session cookie as the only credential; a 401 sends the browser to the login. */
 const api = async (path) => {
@@ -73,6 +74,7 @@ const say = (message) => {
 /** Loads the newest page and replaces the rows with it. */
 const loadFirstPage = async () => {
   say('Carregando notas…')
+  table.setAttribute('aria-busy', 'true')
   body.replaceChildren()
   try {
     const { notas } = await api(listQuery())
@@ -81,6 +83,8 @@ const loadFirstPage = async () => {
   } catch (error) {
     if (error instanceof Error && error.message === 'unauthorized') return
     say('Não foi possível carregar as notas. Tente de novo.')
+  } finally {
+    table.removeAttribute('aria-busy')
   }
 }
 
