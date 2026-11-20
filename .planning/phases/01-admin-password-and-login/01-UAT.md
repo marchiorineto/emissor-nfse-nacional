@@ -1,18 +1,14 @@
 ---
-status: testing
+status: complete
 phase: 01-admin-password-and-login
 source: [01-VERIFICATION.md]
 started: 2026-11-20T20:35:00Z
-updated: 2026-11-20T20:29:30Z
+updated: 2026-11-20T20:30:44.500Z
 ---
 
 ## Current Test
 
-number: 3
-name: Pico, SRI and CSP work in a real browser
-expected: |
-  `/login` and `/admin` render styled with Pico; the console shows no SRI or CSP errors; the Network tab shows requests only to the app's own origin and cdn.jsdelivr.net.
-awaiting: user response
+[testing complete]
 
 ## Tests
 
@@ -26,15 +22,26 @@ result: pass
 
 ### 3. Pico, SRI and CSP work in a real browser
 expected: `/login` and `/admin` render styled with Pico; the console shows no SRI or CSP errors; the Network tab shows requests only to the app's own origin and cdn.jsdelivr.net.
-result: [pending]
+result: issue
+reported: "styled but ugly, no console errors"
+severity: cosmetic
 
 ## Summary
 
 total: 3
 passed: 2
-issues: 0
-pending: 1
+issues: 1
+pending: 0
 skipped: 0
 blocked: 0
 
 ## Gaps
+
+- gap_id: G-01-3
+  truth: "`/login` and `/admin` render styled with Pico; the console shows no SRI or CSP errors; the Network tab shows requests only to the app's own origin and cdn.jsdelivr.net."
+  status: failed
+  reason: "User reported: styled but ugly, no console errors"
+  severity: cosmetic
+  test: 3
+  artifacts: []
+  missing: []
