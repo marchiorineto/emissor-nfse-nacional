@@ -1,5 +1,5 @@
-import { renderDanfse } from './danfse'
-import { buildCancellation, buildDps, brasiliaDate, hosts, unescapeXml, xmlValue, type Environment, type Issuer, type Replacement, type ServiceExport, type Taker } from './dps'
+import { renderDanfse } from './danfse.ts'
+import { buildCancellation, buildDps, brasiliaDate, hosts, unescapeXml, xmlValue, type Environment, type Issuer, type Replacement, type ServiceExport, type Taker } from './dps.ts'
 
 /** What a client asks for. `id` is the client's own key for the sale: asking twice never issues twice. */
 export interface IssueRequest {

@@ -5,14 +5,14 @@ const NS = 'http://www.sped.fazenda.gov.br/nfse'
 const C14N = 'http://www.w3.org/TR/2001/REC-xml-c14n-20010315'
 
 /**
- * Signs the element carrying `Id` (infDPS, infPedReg). The Worker writes the XML already in canonical
+ * Signs the element carrying `Id` (infDPS, infPedReg). `src/dps.ts` writes the XML already in canonical
  * form (no whitespace between tags, no self-closing tags, escaped text, default namespace on the root
  * only), so the signed element's canonical form is its text plus the inherited namespace declaration.
  */
-export const signXml = (xml, keyPem, certB64) => {
+export const signXml = (xml: string, keyPem: string, certB64: string): string => {
   const match = xml.match(/<(inf[A-Za-z]+) Id="([^"]+)">[\s\S]*<\/\1>/)
   if (!match) throw new Error('no element with Id to sign')
-  const [element, name, id] = match
+  const [element, name, id] = match as unknown as [string, string, string]
   const canonical = element.replace(`<${name} Id=`, `<${name} xmlns="${NS}" Id=`)
   const digest = createHash('sha256').update(canonical).digest('base64')
   const signedInfo =

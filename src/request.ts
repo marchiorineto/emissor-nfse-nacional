@@ -1,5 +1,5 @@
-import type { ServiceExport, Taker } from './dps'
-import type { IssueRequest, ReplaceRequest } from './notas'
+import type { ServiceExport, Taker } from './dps.ts'
+import type { IssueRequest, ReplaceRequest } from './notas.ts'
 
 const isText = (value: unknown, max: number): value is string => typeof value === 'string' && value.trim().length > 0 && value.trim().length <= max
 

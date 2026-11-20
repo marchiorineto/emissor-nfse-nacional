@@ -1,8 +1,8 @@
 # Emissor de NFS-e Nacional
 
-Emissor de NFS-e que fala direto com a API do Sistema Nacional NFS-e, sem intermediários e sem custo por nota. Ele roda
-na sua conta da Cloudflare: o seu sistema envia os dados da venda e recebe a nota autorizada, com o XML, o PDF e links
-prontos para mandar ao cliente.
+Emissor de NFS-e que fala direto com a API do Sistema Nacional NFS-e, sem intermediários e sem custo por nota. É um
+servidor Node.js com banco SQLite, que roda em qualquer máquina ou container: o seu sistema envia os dados da venda e
+recebe a nota autorizada, com o XML, o PDF e links prontos para mandar ao cliente.
 
 Ele foi feito para empresas do Simples Nacional (ME, EPP e MEI) que prestam serviços no próprio município, e já emite
 notas em produção para uma ME/EPP. Empresas fora do Simples ainda não são atendidas: veja
@@ -64,24 +64,24 @@ A [documentação](docs/README.md) explica cada resposta, com as regras por muni
 | Item | Custo |
 |---|---|
 | Emissão | Nada: a API do governo é gratuita. |
-| Cloudflare | Plano Workers Paid, de US$ 5 por mês, que inclui uma cota de uso de containers. No tipo `lite`, a cota cobre cerca de 100 horas de container ligado por mês, e o container desliga depois de 10 minutos sem uso. Veja os [preços atuais](https://developers.cloudflare.com/containers/pricing/). |
+| Servidor | O de qualquer máquina com Node.js, ou de um container. O emissor é leve: um servidor pequeno basta. |
 | Certificado digital A1 (e-CNPJ) | Você compra de uma autoridade certificadora e renova todo ano. Se já emite notas, provavelmente já tem um. |
 
 ## Como funciona
 
 ```mermaid
 flowchart LR
-    sistema["Seu sistema"] -->|"POST /v1/notas"| worker["Worker: API e banco D1"]
-    worker -->|"DPS em XML"| container["Container: assina e envia"]
-    container -->|"mTLS com o certificado A1"| governo["Sistema Nacional NFS-e"]
+    sistema["Seu sistema"] -->|"POST /v1/notas"| servidor["Servidor Node.js: API e banco SQLite"]
+    servidor -->|"DPS assinada, mTLS com o certificado A1"| governo["Sistema Nacional NFS-e"]
 ```
 
-- O **Worker** (`src/`) recebe as chamadas, guarda as notas num banco D1 e monta os documentos (`src/dps.ts`).
-- O **container** (`container/`) assina os documentos (XMLDSig, RSA-SHA256) e fala com o governo usando o
-  certificado. Ele existe porque os servidores do governo só pedem o certificado do cliente depois que a conexão já
-  está aberta (renegociação TLS), e o `fetch` dos Workers não faz isso.
-- O número da DPS vem de um contador no D1 e nunca se repete. Se um número já tiver sido usado fora daqui (no portal do
-  governo, por exemplo), o emissor passa para o próximo.
+- O **servidor** (`src/server.ts`) recebe as chamadas, guarda as notas num banco SQLite (`src/repo.ts`) e monta os
+  documentos (`src/dps.ts`).
+- Ele assina os documentos (XMLDSig, RSA-SHA256, em `src/sign.ts`) e fala com o governo usando o certificado
+  (`src/gov.ts`). Os servidores do governo só pedem o certificado do cliente depois que a conexão já está aberta
+  (renegociação TLS), o que o cliente HTTPS do Node faz.
+- O número da DPS vem de um contador no banco e nunca se repete. Se um número já tiver sido usado fora daqui (no portal
+  do governo, por exemplo), o emissor passa para o próximo.
 
 ## Antes de começar
 
@@ -92,9 +92,8 @@ Você vai precisar de:
 2. **Certificado A1 (e-CNPJ) do prestador**: o arquivo `.pfx` e a senha.
 3. **Dados do seu contador**: a situação no Simples Nacional, a alíquota nominal da faixa do Simples (para ME/EPP), o
    código de tributação nacional do serviço e, se ele pedir, o código NBS.
-4. **Conta na Cloudflare** no plano Workers Paid.
-5. **Node.js 22.12 ou mais recente**, o **pnpm** (rode `corepack enable`) e o **Docker** aberto, porque o deploy monta a
-   imagem do container na sua máquina.
+4. **Um servidor** com **Node.js 24** (ou 22.18 em diante), o **pnpm** (rode `corepack enable`) e o `openssl`, ou
+   então o **Docker**.
 
 ## Instalação
 
@@ -102,12 +101,12 @@ Você vai precisar de:
 git clone https://github.com/gabrielbuzziv/emissor-nfse-nacional.git
 cd emissor-nfse-nacional
 pnpm install
-pnpm wrangler login
+cp .env.example .env
 ```
 
 ### 1. Configure os dados do emissor
 
-Preencha os `vars` do `wrangler.jsonc`:
+Preencha o `.env`:
 
 | Variável | O que é |
 |---|---|
@@ -116,48 +115,61 @@ Preencha os `vars` do `wrangler.jsonc`:
 | `ISSUER_CITY_CODE` | O código IBGE do município do CNPJ, com 7 dígitos ([consulte no IBGE](https://www.ibge.gov.br/explica/codigos-dos-municipios.php)). |
 | `ISSUER_MUNICIPAL_SUBSCRIPTION` | A inscrição municipal. Deixe vazio, a menos que o município tenha cadastrado a empresa no Cadastro Nacional de Contribuintes (CNC). Com esse cadastro, ela é obrigatória (erro E0116); sem ele, a nota é recusada com o erro E0120. |
 | `ISSUER_SIMPLES_OPTION` | A situação no Simples Nacional: `2` = MEI; `3` = ME/EPP. O valor `1` (não optante) é aceito, mas o emissor ainda não atende empresas fora do Simples. |
-| `ISSUER_SIMPLES_APURATION` | Só para ME/EPP. `1` = tributos federais e municipal apurados pelo Simples Nacional, o caso mais comum. As outras opções estão no `wrangler.jsonc`. |
+| `ISSUER_SIMPLES_APURATION` | Só para ME/EPP. `1` = tributos federais e municipal apurados pelo Simples Nacional, o caso mais comum. As outras opções estão no `.env.example`. |
 | `ISSUER_SIMPLES_TOTAL_TAX_PERCENT` | Só para ME/EPP. A alíquota nominal da faixa do Simples em que a empresa está, que sai na nota como valor aproximado dos tributos (Lei 12.741/2012). Use ponto e 2 casas decimais, por exemplo `6.00`. |
 | `DPS_SERIES` | A série das DPS, de 1 a 49999, a faixa que o governo reserva à API. O padrão é `1`. |
+| `DATABASE_PATH` | O arquivo do banco SQLite. O padrão é `data/emissor-nfse.db`; a pasta é criada sozinha. |
+| `PORT` | A porta da API. O padrão é `8080`. |
+| `PUBLIC_URL` | O endereço público da API, por exemplo `https://nfse.seudominio.com.br`, quando ela fica atrás de um proxy com HTTPS. É o endereço que vai nos links das notas. |
 
-Por padrão, a API fica em `https://emissor-nfse.<seu-subdominio>.workers.dev`. Para usar um domínio próprio, siga o
-comentário de `routes` no `wrangler.jsonc`.
-
-### 2. Faça o deploy e crie as tabelas
-
-```sh
-pnpm run deploy
-pnpm run migrate
-```
-
-O primeiro deploy cria o banco D1 `emissor-nfse`, e o `migrate` cria as tabelas.
-
-### 3. Envie o certificado e crie o token
+### 2. Adicione o certificado
 
 ```sh
 pnpm run certificate caminho/do/certificado.pfx
 ```
 
-O script pede a senha e confere se o certificado abre, se está na validade e se é do CNPJ configurado. Depois, envia
-tudo como secrets do Worker. Ele também aceita os arquivos `.pfx` mais antigos (RC2/3DES), comuns em certificados A1.
+O script pede a senha e confere se o certificado abre, se está na validade e se é do CNPJ configurado. Depois, grava o
+certificado em base64 no `.env` (`CERT_PFX_B64`), com a senha (`CERT_PASSWORD`). Ele também aceita os arquivos `.pfx`
+mais antigos (RC2/3DES), comuns em certificados A1.
 
-Gere um token para os seus sistemas chamarem a API e salve-o como secret (cole o token quando o Wrangler pedir):
+Se o `API_TOKEN` estiver vazio, o script também gera um. É o token que os seus sistemas usam para chamar a API. Guarde-o
+num lugar seguro: ele protege a API e também assina os links públicos das notas. Trocar o token invalida os links já
+enviados.
+
+### 3. Inicie o servidor
 
 ```sh
-node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
-pnpm wrangler secret put API_TOKEN
+pnpm start
 ```
 
-Guarde o token num lugar seguro: ele protege a API e também assina os links públicos das notas. Trocar o token
-invalida os links já enviados.
+Na primeira vez, o servidor cria o banco e as tabelas. Para manter o servidor no ar, use o gerenciador de serviços da
+sua máquina (systemd, por exemplo) ou o Docker:
+
+```sh
+docker build -t emissor-nfse .
+docker run -d --name emissor-nfse --restart unless-stopped --env-file .env -p 8080:8080 -v emissor-nfse-data:/data emissor-nfse
+```
+
+No Docker, o banco fica no volume `emissor-nfse-data`. Para ter HTTPS, coloque um proxy na frente (Caddy, nginx ou o
+da sua hospedagem) e preencha `PUBLIC_URL`.
+
+**Faça backup do arquivo do banco.** É nele que ficam as notas e o contador das DPS. O governo guarda as notas
+emitidas, mas sem o banco o emissor perde a numeração e o vínculo entre o `id` de cada venda e a sua nota. Copie com o
+próprio SQLite, que funciona com o servidor ligado (copiar só o arquivo `.db` pode perder as últimas gravações):
+
+```sh
+sqlite3 data/emissor-nfse.db ".backup backup-$(date +%F).db"
+```
+
+Uma cópia diária basta para poucas notas; para uma cópia contínua, use o [Litestream](https://litestream.io).
 
 ### 4. Confira a instalação
 
 ```sh
-curl -H "Authorization: Bearer $API_TOKEN" "https://emissor-nfse.<seu-subdominio>.workers.dev/health?deep=1"
+curl -H "Authorization: Bearer $API_TOKEN" "http://localhost:8080/health?deep=1"
 ```
 
-Com tudo certo, a resposta traz `"ok": true`, a validade do certificado em `container.certNotAfter` e os parâmetros do
+Com tudo certo, a resposta traz `"ok": true`, a validade do certificado em `certificate.notAfter` e os parâmetros do
 município em `cityAgreement`. Se faltar alguma variável, ela aparece em `config`.
 
 O `"ok": true` diz que o governo aceitou o certificado e respondeu sobre o município. Para saber se a prefeitura usa os
@@ -170,7 +182,7 @@ Com `NFSE_ENVIRONMENT` em `restricted`, as notas vão para a produção restrita
 `serviceCode` pelo código do seu serviço:
 
 ```sh
-curl -X POST "https://emissor-nfse.<seu-subdominio>.workers.dev/v1/notas" \
+curl -X POST "http://localhost:8080/v1/notas" \
   -H "Authorization: Bearer $API_TOKEN" \
   -H "content-type: application/json" \
   -d '{"id":"teste-1","serviceCode":"080201","description":"Nota de teste","valueCents":100}'
@@ -184,12 +196,24 @@ Para emitir notas de verdade:
 1. Apague as notas de teste e zere a numeração. Os testes ficam no mesmo banco, e um `id` usado no teste devolveria a
    nota de teste. Faça isso só agora, nunca depois de ir para a produção:
    ```sh
-   pnpm wrangler d1 execute emissor-nfse --remote --command "DELETE FROM notas; DELETE FROM counters;"
+   sqlite3 data/emissor-nfse.db "DELETE FROM notas; DELETE FROM counters;"
    ```
-2. Mude `NFSE_ENVIRONMENT` para `production` e rode `pnpm run deploy`.
+   Com o servidor parado. No Docker, apague o volume (`docker volume rm emissor-nfse-data`) antes de subir de novo.
+2. Mude `NFSE_ENVIRONMENT` para `production` e reinicie o servidor.
 3. Rode o `/health?deep=1` de novo.
 4. Emita a primeira nota de uma venda real e confira os dados na consulta pública (o link `links.lookup` da resposta)
    antes de ligar a emissão automática.
+
+## Vindo da versão na Cloudflare
+
+As versões anteriores rodavam num Worker da Cloudflare, com o banco no D1. Para trazer as notas e a numeração:
+
+1. Exporte o banco: `npx wrangler d1 export emissor-nfse --remote --output emissor-nfse.sql`.
+2. Importe num banco novo, antes de iniciar o servidor:
+   `mkdir -p data && sqlite3 data/emissor-nfse.db < emissor-nfse.sql`.
+3. Copie os `vars` do `wrangler.jsonc` para o `.env`, rode `pnpm run certificate` e ponha no `API_TOKEN` o mesmo token
+   de antes, para os links já enviados continuarem valendo.
+4. Inicie o servidor. Ele reconhece o banco importado e não recria as tabelas.
 
 ## API
 
@@ -202,7 +226,7 @@ Todas as rotas pedem o cabeçalho `Authorization: Bearer <API_TOKEN>`, menos os 
 | `GET /v1/notas/:id/pdf` | Devolve o PDF da nota (DANFSe). |
 | `POST /v1/notas/:id/cancel` | Cancela a nota. |
 | `GET /v1/notas` | Lista as notas, das mais recentes para as mais antigas. |
-| `GET /health` | Confere a configuração, o container e a validade do certificado; com `?deep=1`, também consulta o município no governo. |
+| `GET /health` | Confere a configuração e a validade do certificado; com `?deep=1`, também consulta o município no governo. |
 
 ### Emitir
 
@@ -351,16 +375,16 @@ o `limit` vai até 100 (o padrão é 50). Para a página seguinte, passe em `bef
 
 ## Renovar o certificado
 
-Antes do vencimento, rode `pnpm run certificate novo-certificado.pfx`. As chamadas seguintes já usam o certificado
-novo, sem deploy; confira a validade em `GET /health` (`container.certNotAfter`).
+Antes do vencimento, rode `pnpm run certificate novo-certificado.pfx` e reinicie o servidor. No Docker, recrie o
+container com o `.env` novo. Confira a validade em `GET /health` (`certificate.notAfter`).
 
 ## Problemas comuns
 
 | Sintoma | O que fazer |
 |---|---|
-| O `/health` mostra `config` | Corrija as variáveis listadas no `wrangler.jsonc` e rode `pnpm run deploy`. |
-| `container.error` diz `no certificate` | Envie o certificado com `pnpm run certificate`. |
-| `container.error` diz `cannot open the certificate` | A senha enviada não abre o certificado; rode `pnpm run certificate` de novo. |
+| O `/health` mostra `config` | Corrija as variáveis listadas no `.env` e reinicie o servidor. |
+| `certificate.error` diz `no certificate` | Adicione o certificado com `pnpm run certificate` e reinicie o servidor. |
+| `certificate.error` diz `cannot open the certificate` | A senha não abre o certificado; rode `pnpm run certificate` de novo. |
 | `cityAgreement` sem status 200 | O município não está ativo nesse ambiente (a produção restrita não tem todos), ou o governo recusou o certificado. |
 | Nota recusada com `HTTP 403` | O governo recusou o certificado: confira se ele é um e-CNPJ ICP-Brasil do prestador e se está na validade. |
 | Nota recusada com `E0120` | Deixe `ISSUER_MUNICIPAL_SUBSCRIPTION` vazio. |
@@ -395,21 +419,21 @@ o Simples Nacional: os campos novos da NT 009 e, em 1º/1/2027, o IBS e a CBS. V
 ```sh
 pnpm test            # documentos contra os XSDs oficiais, assinaturas e fluxos de emissão e cancelamento
 pnpm run typecheck
-pnpm run dev         # roda tudo na sua máquina, com o container no Docker
+pnpm run dev         # roda o servidor e reinicia a cada mudança no código
 ```
 
 Os testes usam o `xmllint` e o `xmlsec1`. No macOS, rode `brew install libxmlsec1` (o `xmllint` já vem no sistema); no
 Debian ou no Ubuntu, `sudo apt install libxml2-utils xmlsec1`.
 
-Para o `pnpm run dev`, crie um `.dev.vars` a partir do `.dev.vars.example`, com o `.pfx` em base64 em `CERT_PFX_B64_1`.
+O servidor roda o TypeScript direto no Node, sem etapa de build.
 
 Contribuições são bem-vindas: abra uma issue ou um pull request, com `pnpm test` e `pnpm run typecheck` passando.
 
 ## Segurança
 
 - Use o token da API só no servidor, nunca no navegador ou em apps.
-- O certificado e a senha ficam guardados como secrets na Cloudflare. O `.gitignore` bloqueia arquivos `.pfx`, `.p12`,
-  `.pem` e `.key`; nunca coloque esses arquivos no repositório.
+- O certificado e a senha ficam no `.env`, que o script grava com permissão só para o dono do arquivo. O `.gitignore`
+  bloqueia o `.env` e os arquivos `.pfx`, `.p12`, `.pem` e `.key`; nunca coloque esses arquivos no repositório.
 - Os links públicos das notas são assinados com uma chave derivada do token.
 
 ## Aviso
@@ -425,7 +449,6 @@ contador.
 - [Documentação técnica](https://www.gov.br/nfse/pt-br/biblioteca/documentacao-tecnica)
 - [Manual das APIs para contribuintes (PDF)](https://www.gov.br/nfse/pt-br/biblioteca/documentacao-tecnica/documentacao-atual/manual-contribuintes-apis-adn-sistema-nacional-nfse.pdf)
 - [Produção restrita](https://www.gov.br/nfse/pt-br/biblioteca/documentacao-tecnica/producao-restrita)
-- [Preços dos containers da Cloudflare](https://developers.cloudflare.com/containers/pricing/)
 
 ## Licença
 

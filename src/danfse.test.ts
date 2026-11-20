@@ -1,8 +1,8 @@
 import { readFileSync, writeFileSync } from 'node:fs'
 import { PDFDocument } from 'pdf-lib'
 import { describe, expect, it } from 'vitest'
-import { publicLookupUrl, renderDanfse } from './danfse'
-import { buildDps, type DpsInput } from './dps'
+import { publicLookupUrl, renderDanfse } from './danfse.ts'
+import { buildDps, type DpsInput } from './dps.ts'
 
 const accessKey = '35503082211222333000181000000000000126111234567890'
 

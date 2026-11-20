@@ -3,9 +3,8 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeAll, describe, expect, it } from 'vitest'
-// @ts-expect-error plain JS module that runs in the container
-import { signXml } from '../container/sign.mjs'
-import { buildCancellation, buildDps, type Issuer } from './dps'
+import { buildCancellation, buildDps, type Issuer } from './dps.ts'
+import { signXml } from './sign.ts'
 
 const issuer: Issuer = { cnpj: '11222333000181', cityCode: '3550308', simplesNacionalOption: '3', simplesNacionalTotalTaxPercent: '6.00' }
 const dir = mkdtempSync(join(tmpdir(), 'nfse-sign-'))

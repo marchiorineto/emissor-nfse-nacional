@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { configFrom, configProblems, type IssuerVars } from './config'
+import { configFrom, configProblems, type IssuerVars } from './config.ts'
 
 const vars = (overrides: Partial<IssuerVars> = {}): IssuerVars => ({
   NFSE_ENVIRONMENT: 'restricted',

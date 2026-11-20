@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseIssueRequest } from './request'
+import { parseIssueRequest } from './request.ts'
 
 const address = { country: 'us', postalCode: '94105', city: 'San Francisco', region: 'CA', street: 'Market St', number: '1' }
 const base = { id: 'sale-1', serviceCode: '010101', nbsCode: '115022000', description: 'Software development', valueCents: 10000 }

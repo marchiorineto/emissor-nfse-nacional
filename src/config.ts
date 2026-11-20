@@ -1,7 +1,8 @@
-import { hosts, type Environment, type Issuer } from './dps'
-import { notaError, type Config } from './notas'
+import { hosts, type Environment, type Issuer } from './dps.ts'
+import type { Env } from './env.ts'
+import { notaError, type Config } from './notas.ts'
 
-/** The `vars` of wrangler.jsonc that describe the issuer. */
+/** The settings that describe the issuer. */
 export type IssuerVars = Pick<
   Env,
   | 'NFSE_ENVIRONMENT'
@@ -34,7 +35,7 @@ export const configProblems = (vars: IssuerVars): string[] => {
 
 export const configFrom = (vars: IssuerVars): Config => {
   const problems = configProblems(vars)
-  if (problems.length) throw notaError(500, `fix the vars in wrangler.jsonc: ${problems.join('; ')}`)
+  if (problems.length) throw notaError(500, `fix the settings in .env: ${problems.join('; ')}`)
   const issuer: Issuer = {
     cnpj: vars.ISSUER_CNPJ,
     cityCode: vars.ISSUER_CITY_CODE,

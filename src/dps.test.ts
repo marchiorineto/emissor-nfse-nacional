@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { brasiliaDateTime, buildCancellation, buildDps, dpsId, type DpsInput, type Environment, type Issuer, type Taker } from './dps'
+import { brasiliaDateTime, buildCancellation, buildDps, dpsId, type DpsInput, type Environment, type Issuer, type Taker } from './dps.ts'
 
 const issuer: Issuer = {
   cnpj: '11.222.333/0001-81',

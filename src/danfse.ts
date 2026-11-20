@@ -1,6 +1,6 @@
 import { PDFDocument, rgb, StandardFonts, type PDFFont, type PDFPage } from 'pdf-lib'
 import { encode } from 'uqr'
-import { unescapeXml, xmlValue } from './dps'
+import { unescapeXml, xmlValue } from './dps.ts'
 
 /**
  * Our own rendering of the NFS-e (DANFSe) from the authorized XML, used when the government's DANFSe

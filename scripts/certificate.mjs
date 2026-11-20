@@ -1,16 +1,16 @@
-// Uploads the A1 certificate as secrets of the Worker: the .pfx in base64, split into CERT_PFX_B64_1.._N because a
-// secret holds at most 5 kB, plus CERT_PASSWORD; parts left over from a bigger certificate are deleted.
+// Adds the A1 certificate to .env: checks that the .pfx opens with the password, is not expired and belongs to the
+// ISSUER_CNPJ, then writes it in base64 as CERT_PFX_B64, with CERT_PASSWORD. Creates .env from .env.example when
+// there is none, and generates the API_TOKEN when it is empty.
 // Usage: pnpm run certificate <file.pfx>. Asks for the password, or reads it from CERT_PASSWORD.
-// package.json runs it with --openssl-legacy-provider, so older .pfx files (RC2/3DES) open here as in the container.
-import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+// package.json runs it with --openssl-legacy-provider, so older .pfx files (RC2/3DES) open here as in the server.
+import { randomBytes } from 'node:crypto'
+import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createSecureContext, TLSSocket } from 'node:tls'
 
-const PART_SIZE = 4000
-const PART_NAME = /^CERT_PFX_B64_(\d+)$/
 const ROOT = join(import.meta.dirname, '..')
-const WRANGLER = join(ROOT, 'node_modules', 'wrangler', 'bin', 'wrangler.js')
+const ENV_FILE = join(ROOT, '.env')
+const ENV_EXAMPLE = join(ROOT, '.env.example')
 
 const fail = (message) => {
   console.error(`\nErro: ${message}`)
@@ -46,7 +46,7 @@ const askHidden = (question) =>
     stdout.write(question)
   })
 
-/** The certificate in the .pfx, opened the way the container's TLS client opens it. */
+/** The certificate in the .pfx, opened the way the server's TLS client opens it. */
 const openCertificate = (pfx, passphrase) => {
   try {
     const socket = new TLSSocket(null, { isServer: true, secureContext: createSecureContext({ pfx, passphrase }) })
@@ -55,14 +55,6 @@ const openCertificate = (pfx, passphrase) => {
     return certificate?.subject ? certificate : fail('o arquivo não tem um certificado.')
   } catch (error) {
     return fail(/mac verify failure/i.test(error.message) ? 'senha incorreta.' : `não foi possível abrir o certificado (${error.message}).`)
-  }
-}
-
-const wrangler = (args, input) => {
-  try {
-    return execFileSync(process.execPath, [WRANGLER, ...args], { cwd: ROOT, input, stdio: [input === undefined ? 'inherit' : 'pipe', 'pipe', 'inherit'] }).toString()
-  } catch {
-    return fail(`o comando \`wrangler ${args.join(' ')}\` falhou (veja a mensagem acima). Você já rodou \`pnpm wrangler login\` e \`pnpm run deploy\`?`)
   }
 }
 
@@ -85,23 +77,28 @@ console.log(`Válido até: ${expiresAt.toLocaleDateString('pt-BR')}`)
 if (expiresAt < new Date()) fail('este certificado está vencido.')
 
 const certificateCnpj = String(certificate.subject.CN ?? '').match(/\d{14}/)?.[0]
-const issuerCnpj = readFileSync(join(ROOT, 'wrangler.jsonc'), 'utf8').match(/"ISSUER_CNPJ":\s*"([^"]*)"/)?.[1]?.replace(/\D/g, '')
+const issuerCnpj = (process.env.ISSUER_CNPJ ?? '').replace(/\D/g, '')
 if (certificateCnpj && issuerCnpj && certificateCnpj !== issuerCnpj) {
-  console.warn(`Atenção: o certificado é do CNPJ ${certificateCnpj}, mas o ISSUER_CNPJ do wrangler.jsonc é ${issuerCnpj}.`)
+  console.warn(`Atenção: o certificado é do CNPJ ${certificateCnpj}, mas o ISSUER_CNPJ do .env é ${issuerCnpj}.`)
 }
 
-const base64 = pfx.toString('base64')
-const parts = Array.from({ length: Math.ceil(base64.length / PART_SIZE) }, (_, index) => base64.slice(index * PART_SIZE, (index + 1) * PART_SIZE))
-const listed = wrangler(['secret', 'list', '--format', 'json'])
-const stale = JSON.parse(listed.slice(listed.indexOf('[')))
-  .map((secret) => secret.name)
-  .filter((name) => Number(name.match(PART_NAME)?.[1] ?? 0) > parts.length)
-const secrets = {
-  ...Object.fromEntries(parts.map((part, index) => [`CERT_PFX_B64_${index + 1}`, part])),
-  CERT_PASSWORD: password,
-  ...Object.fromEntries(stale.map((name) => [name, null])),
+/** Sets `name=value` in the .env text, replacing the line if there is one. */
+const setVar = (text, name, value) => {
+  const line = `${name}=${value}`
+  const pattern = new RegExp(`^${name}=.*$`, 'm')
+  return pattern.test(text) ? text.replace(pattern, () => line) : `${text}${text && !text.endsWith('\n') ? '\n' : ''}${line}\n`
 }
 
-console.log(`\nEnviando o certificado (${parts.length} ${parts.length === 1 ? 'parte' : 'partes'})...`)
-console.log(wrangler(['secret', 'bulk'], JSON.stringify(secrets)))
-console.log('Pronto. As próximas chamadas já usam este certificado; confira a validade em GET /health (certNotAfter).')
+if (/[\r\n]/.test(password)) fail('a senha não pode ter quebra de linha.')
+// The .env parser has no escapes: quote with a character the password does not have.
+const quote = ["'", '`', '"'].find((char) => !password.includes(char)) ?? fail("a senha tem ', ` e \"; defina CERT_PASSWORD no ambiente.")
+const quoted = `${quote}${password}${quote}`
+const current = existsSync(ENV_FILE) ? readFileSync(ENV_FILE, 'utf8') : existsSync(ENV_EXAMPLE) ? readFileSync(ENV_EXAMPLE, 'utf8') : ''
+const hasToken = /^API_TOKEN=\S/m.test(current)
+const vars = [['CERT_PFX_B64', pfx.toString('base64')], ['CERT_PASSWORD', quoted], ...(hasToken ? [] : [['API_TOKEN', randomBytes(32).toString('hex')]])]
+writeFileSync(ENV_FILE, vars.reduce((text, [name, value]) => setVar(text, name, value), current), { mode: 0o600 })
+chmodSync(ENV_FILE, 0o600)
+console.log('\nCertificado gravado no .env (CERT_PFX_B64 e CERT_PASSWORD).')
+if (!hasToken) console.log('Token da API gerado no .env (API_TOKEN): use-o no cabeçalho Authorization dos seus sistemas.')
+console.log('Reinicie o servidor para usar este certificado.')
+console.log('Confira a validade em GET /health (certificate.notAfter).')

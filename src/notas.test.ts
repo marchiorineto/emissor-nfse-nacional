@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { xmlValue } from './dps'
-import { createNotas, type Config, type Gov, type GovResult, type IssueRequest } from './notas'
-import { createMemoryRepo } from './repo'
+import { xmlValue } from './dps.ts'
+import { createNotas, type Config, type Gov, type GovResult, type IssueRequest } from './notas.ts'
+import { createMemoryRepo } from './repo.ts'
 
 const config: Config = {
   environment: 'production',
