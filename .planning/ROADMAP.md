@@ -62,12 +62,12 @@ Plans:
   2. The admin can filter the list by status and load the next page, and the filter stays applied while more notas load.
   3. The admin can open a nota and see all its details, including the government's errors when it was rejected.
   4. For an issued nota, the admin can download the PDF from the panel.
-**Plans:** 4 plans
+**Plans:** 2/4 plans executed
 
 Plans:
 **Wave 1**
-- [ ] 02-01-PLAN.md — List tracer: CSP connect-src, /admin shell, panel.js + format.js, formatted columns, status emphasis, mobile cards, headless-Chrome smoke harness (wave 1)
-- [ ] 02-02-PLAN.md — API: beforeId cursor tiebreak, memory-repo parity, limit clamp, ?download=1 PDF attachment (wave 1)
+- [x] 02-01-PLAN.md — List tracer: CSP connect-src, /admin shell, panel.js + format.js, formatted columns, status emphasis, mobile cards, headless-Chrome smoke harness (wave 1)
+- [x] 02-02-PLAN.md — API: beforeId cursor tiebreak, memory-repo parity, limit clamp, ?download=1 PDF attachment (wave 1)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 - [ ] 02-03-PLAN.md — Status filter in the URL, Carregar mais paging under the filter, PDF link in each row (wave 2)
@@ -96,5 +96,5 @@ Phases execute in numeric order: 1 → 2 → 3
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Admin Password and Login | 5/5 | In Progress | - |
-| 2. Notas Panel | 0/4 | Not started | - |
+| 2. Notas Panel | 2/4 | In Progress | - |
 | 3. Nota Actions | 0/TBD | Not started | - |
