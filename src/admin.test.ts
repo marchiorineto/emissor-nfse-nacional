@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
-import { PICO_CSS_INTEGRITY } from './admin.ts'
+import { PAGE_CSP, PICO_CSS_INTEGRITY, PICO_CSS_URL } from './admin.ts'
 import { createApp } from './app.ts'
 import { envFrom } from './env.ts'
 import type { Gov, GovResult } from './notas.ts'
@@ -191,6 +191,92 @@ describe('login throttle, parallel attempts', () => {
     const app = setup()
     const statuses = (await Promise.all([1, 2, 3].map(() => login(app, 'wrong password 12', { 'x-forwarded-for': '198.51.100.9' })))).map((res) => res.status)
     expect(statuses.sort()).toEqual([401, 429, 429])
+  })
+})
+
+/** Posts the login form with exactly the given headers (no implicit Sec-Fetch-Site), from the fixed address 203.0.113.50. */
+const rawLogin = (app: ReturnType<typeof setup>, password: string, headers: Record<string, string> = {}, body?: string) =>
+  app.request('http://api.test/login', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded', 'x-forwarded-for': '203.0.113.50', ...headers },
+    body: body ?? new URLSearchParams({ password }),
+  })
+
+describe('cross-site login refusal', () => {
+  it('refuses Sec-Fetch-Site cross-site and same-site, and accepts same-origin and none', async () => {
+    const app = setup()
+    for (const site of ['cross-site', 'same-site']) {
+      const res = await rawLogin(app, 'wrong password 12', { 'sec-fetch-site': site })
+      expect(res.status).toBe(403)
+      expect(await res.text()).toBe('Pedido recusado.')
+    }
+    clock.ms += 10_000
+    for (const site of ['same-origin', 'none']) {
+      expect((await rawLogin(app, 'wrong password 12', { 'sec-fetch-site': site })).status).toBe(401)
+      clock.ms += 10_000
+    }
+  })
+
+  it('falls back to Origin without Sec-Fetch-Site: null and foreign origins refused, own origins accepted', async () => {
+    for (const origin of ['https://evil.example', 'null']) {
+      expect((await rawLogin(setup(), PASSWORD, { origin })).status).toBe(403)
+    }
+    expect((await rawLogin(setup(), PASSWORD, { origin: 'http://api.test' })).status).toBe(303)
+    expect((await rawLogin(setup({ PUBLIC_URL: 'https://nfse.example.com' }), PASSWORD, { origin: 'https://nfse.example.com' })).status).toBe(303)
+    const proxied = { origin: 'https://nfse.example.com', 'x-forwarded-proto': 'https', 'x-forwarded-host': 'nfse.example.com' }
+    expect((await rawLogin(setup(), PASSWORD, proxied)).status).toBe(303)
+  })
+
+  it('lets a post with neither header through', async () => {
+    expect((await rawLogin(setup(), PASSWORD)).status).toBe(303)
+  })
+
+  it('does not count refused posts as failures', async () => {
+    const app = setup()
+    for (let n = 0; n < 3; n++) expect((await rawLogin(app, PASSWORD, { 'sec-fetch-site': 'cross-site' })).status).toBe(403)
+    expect((await rawLogin(app, PASSWORD, { 'sec-fetch-site': 'same-origin' })).status).toBe(303)
+  })
+})
+
+describe('login body limit', () => {
+  it('answers 413 for a 5 000-byte body before any password check and counts nothing', async () => {
+    const app = setup()
+    const big = await rawLogin(app, '', { 'sec-fetch-site': 'same-origin' }, `password=${'a'.repeat(4991)}`)
+    expect(big.status).toBe(413)
+    expect(await big.text()).toBe('Pedido grande demais.')
+    expect((await rawLogin(app, PASSWORD, { 'sec-fetch-site': 'same-origin' })).status).toBe(303)
+  })
+})
+
+describe('panel security headers', () => {
+  const expectHeaders = (res: Response) => {
+    expect(res.headers.get('cache-control')).toBe('no-store')
+    expect(res.headers.get('content-security-policy')).toBe(PAGE_CSP)
+    expect(res.headers.get('referrer-policy')).toBe('no-referrer')
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff')
+  }
+
+  it('sends them on /login, a refused login, /admin, its redirect and /logout', async () => {
+    const app = setup()
+    expectHeaders(await app.request('http://api.test/login'))
+    expectHeaders(await login(app, 'wrong password 12'))
+    clock.ms += 10_000
+    const { cookie, csrf } = await session(app)
+    expectHeaders(await app.request('http://api.test/admin', { headers: { cookie } }))
+    expectHeaders(await app.request('http://api.test/admin'))
+    expectHeaders(await logout(app, { cookie }, csrf))
+  })
+
+  it('allows only Pico from jsDelivr: no script tag and one absolute URL in src or href', async () => {
+    expect(PAGE_CSP).toContain("frame-ancestors 'none'")
+    const app = setup()
+    const { cookie } = await session(app)
+    const bodies = [await (await app.request('http://api.test/login')).text(), await (await app.request('http://api.test/admin', { headers: { cookie } })).text()]
+    for (const body of bodies) {
+      expect(body).not.toContain('<script')
+      const urls = [...body.matchAll(/(?:src|href)="(https?:\/\/[^"]+)"/g)].map((match) => match[1])
+      expect(urls).toEqual([PICO_CSS_URL])
+    }
   })
 })
 
