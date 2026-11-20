@@ -1,10 +1,11 @@
-import { beforeAll, describe, expect, it } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { PICO_CSS_INTEGRITY } from './admin.ts'
 import { createApp } from './app.ts'
 import { envFrom } from './env.ts'
 import type { Gov, GovResult } from './notas.ts'
 import { hashPassword } from './password.ts'
 import { createMemoryRepo } from './repo.ts'
+import { issueSession, sessionKey } from './session.ts'
 
 const TOKEN = 'secret-token'
 const PASSWORD = 'correct horse battery'
@@ -162,5 +163,77 @@ describe('admin guard and logout', () => {
     const app = setup()
     const { cookie } = await session(app)
     expect((await app.request('http://api.test/logout', { headers: { cookie } })).status).toBe(404)
+  })
+})
+
+const START = Date.UTC(2026, 10, 20, 12)
+
+describe('session cookie flags, expiry and edge cases', () => {
+  afterEach(() => {
+    clock.ms = START
+    vi.restoreAllMocks()
+  })
+
+  it('sets HttpOnly, SameSite=Strict, Path=/ and Max-Age=43200, and Secure only over HTTPS', async () => {
+    const plain = (await login(setup(), PASSWORD)).headers.get('set-cookie') ?? ''
+    for (const flag of ['HttpOnly', 'SameSite=Strict', 'Path=/', 'Max-Age=43200']) expect(plain).toContain(flag)
+    expect(plain).not.toContain('Secure')
+    const byUrl = await login(setup(), PASSWORD, {}, 'https://api.test/login')
+    const byPublicUrl = await login(setup({ PUBLIC_URL: 'https://nfse.example.com' }), PASSWORD)
+    const byProxy = await login(setup(), PASSWORD, { 'x-forwarded-proto': 'https' })
+    for (const res of [byUrl, byPublicUrl, byProxy]) expect(res.headers.get('set-cookie')).toContain('Secure')
+  })
+
+  it('keeps the session until exactly 12 hours after login, by the server clock', async () => {
+    clock.ms = START
+    const app = setup()
+    const cookie = cookieOf(await login(app, PASSWORD)) ?? ''
+    clock.ms = START + 43_199_000
+    expect((await app.request('http://api.test/admin', { headers: { cookie } })).status).toBe(200)
+    clock.ms = START + 43_200_000
+    const expired = await app.request('http://api.test/admin', { headers: { cookie } })
+    expect(expired.status).toBe(303)
+    expect(expired.headers.get('location')).toBe('/login')
+  })
+
+  it('refuses a cookie issued under another password hash (PASS-04)', async () => {
+    const cookie = cookieOf(await login(setup(), PASSWORD)) ?? ''
+    const other = setup({ ADMIN_PASSWORD: await hashPassword('another long password') })
+    const res = await other.request('http://api.test/admin', { headers: { cookie } })
+    expect(res.status).toBe(303)
+    expect(res.headers.get('location')).toBe('/login')
+  }, 30_000)
+
+  it('lets only the first nfse_admin value in the Cookie header decide', async () => {
+    const app = setup()
+    const valid = cookieOf(await login(app, PASSWORD)) ?? ''
+    expect((await app.request('http://api.test/admin', { headers: { cookie: `nfse_admin=forged; ${valid}` } })).status).toBe(303)
+    expect((await app.request('http://api.test/admin', { headers: { cookie: `${valid}; nfse_admin=forged` } })).status).toBe(200)
+  })
+
+  it('never exposes API_TOKEN and refuses a session signed with it', async () => {
+    const app = setup()
+    const res = await login(app, PASSWORD)
+    const cookie = cookieOf(res) ?? ''
+    const bodies = [
+      await (await app.request('http://api.test/login')).text(),
+      await (await app.request('http://api.test/admin', { headers: { cookie } })).text(),
+    ]
+    for (const body of bodies) expect(body).not.toContain(TOKEN)
+    expect(res.headers.get('set-cookie')).not.toContain(TOKEN)
+    const forged = `nfse_admin=${issueSession(sessionKey(TOKEN), clock.ms).value}`
+    expect((await app.request('http://api.test/admin', { headers: { cookie: forged } })).status).toBe(303)
+  })
+
+  it('does not log the submitted password', async () => {
+    const spies = [vi.spyOn(console, 'log'), vi.spyOn(console, 'warn'), vi.spyOn(console, 'error')]
+    const app = setup()
+    await login(app, 'wrong password 12')
+    await login(app, PASSWORD)
+    for (const call of spies.flatMap((spy) => spy.mock.calls)) {
+      const text = JSON.stringify(call)
+      expect(text).not.toContain('wrong password 12')
+      expect(text).not.toContain(PASSWORD)
+    }
   })
 })
