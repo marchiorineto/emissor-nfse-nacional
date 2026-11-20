@@ -2,10 +2,10 @@
 phase: "2"
 slug: "notas-panel"
 # status lifecycle: draft (seeded by plan-phase) → validated (set by validate-phase §6)
-# audit-milestone §5.5 distinguishes NOT-VALIDATED (draft) from PARTIAL (validated + nyquist_compliant: false) (#2117)
-status: draft
-nyquist_compliant: false
-wave_0_complete: false
+# audit-milestone §5.5 distinguishes NOT-VALIDATED (draft) from PARTIAL (validated + nyquist_compliant: true) (#2117)
+status: validated
+nyquist_compliant: true
+wave_0_complete: true
 created: "2026-11-20"
 ---
 
@@ -38,17 +38,17 @@ created: "2026-11-20"
 
 ## Per-Task Verification Map
 
-Seeded from RESEARCH.md § Validation Architecture at requirement level. Task IDs are filled in once plans exist.
+Seeded from RESEARCH.md § Validation Architecture at requirement level. Task IDs filled in by validate-phase after execution (2026-11-20).
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| TBD | TBD | TBD | PANEL-01 | TBD | `/admin` has one module script, no `API_TOKEN` in page or script; script routes behind the session guard with `nosniff`, CSP, `no-store` | integration | `pnpm exec vitest run src/admin.test.ts` | ✅ file / ❌ W0 cases | ⬜ pending |
-| TBD | TBD | TBD | PANEL-01 | TBD | `PAGE_CSP` adds only `connect-src 'self'` | unit | `pnpm exec vitest run src/admin.test.ts` | ✅ (update exact-string test) | ⬜ pending |
-| TBD | TBD | TBD | PANEL-01 | — | N/A (formatters: currency, competence, Brasília fallback, CPF/CNPJ, taker, number, status) | unit | `pnpm exec vitest run src/panel/format.test.ts` | ❌ W0 | ⬜ pending |
-| TBD | TBD | TBD | PANEL-02 | — | `listQuery` always sends `limit=20`; unknown status rejected | unit | `pnpm exec vitest run src/panel/format.test.ts` | ❌ W0 | ⬜ pending |
-| TBD | TBD | TBD | PANEL-02 | TBD | Cursor `(created_at, id)` neither skips nor repeats; `limit=-1` capped | unit + integration | `pnpm exec vitest run src/repo.test.ts src/app.test.ts src/appSession.test.ts` | ✅ files / ❌ W0 cases | ⬜ pending |
-| TBD | TBD | TBD | PANEL-03 | TBD | Detail sections/error box built as plain strings; API text with `<script>` never becomes HTML | unit | `pnpm exec vitest run src/panel/format.test.ts` | ❌ W0 | ⬜ pending |
-| TBD | TBD | TBD | PANEL-04 | TBD | `?download=1` answers `attachment` with a number-based filename; default stays `inline`; relative `/v1` href only when `accessKey` set | integration + unit | `pnpm exec vitest run src/app.test.ts src/appSession.test.ts src/panel/format.test.ts` | ❌ W0 | ⬜ pending |
+| 02-01 T1 | 02-01 | 1 | PANEL-01 | — | `/admin` has one module script, no `API_TOKEN` in page or script; script routes behind the session guard with `nosniff`, CSP, `no-store` | integration | `pnpm exec vitest run src/admin.test.ts` | ✅ | ✅ green |
+| 02-01 T1 | 02-01 | 1 | PANEL-01 | — | `PAGE_CSP` adds only `connect-src 'self'` | unit | `pnpm exec vitest run src/admin.test.ts` | ✅ | ✅ green |
+| 02-01 T2 | 02-01 | 1 | PANEL-01 | — | N/A (formatters: currency, competence, Brasília fallback, CPF/CNPJ, taker, number, status) | unit | `pnpm exec vitest run src/panel/format.test.ts` | ✅ | ✅ green |
+| 02-01 T1, 02-03 T1 | 02-01, 02-03 | 1, 2 | PANEL-02 | — | `listQuery` always sends `limit=20`; unknown status rejected | unit | `pnpm exec vitest run src/panel/format.test.ts` | ✅ | ✅ green |
+| 02-02 T1-T2 | 02-02 | 1 | PANEL-02 | TBD | Cursor `(created_at, id)` neither skips nor repeats; `limit=-1` capped | unit + integration | `pnpm exec vitest run src/repo.test.ts src/app.test.ts src/appSession.test.ts` | ✅ | ✅ green |
+| 02-04 T2 | 02-04 | 3 | PANEL-03 | TBD | Detail sections/error box built as plain strings; API text with `<script>` never becomes HTML | unit | `pnpm exec vitest run src/panel/format.test.ts` | ✅ | ✅ green |
+| 02-02 T3, 02-03 T3 | 02-02, 02-03 | 1, 2 | PANEL-04 | — | `?download=1` answers `attachment` with a number-based filename; default stays `inline`; relative `/v1` href only when `accessKey` set | integration + unit | `pnpm exec vitest run src/app.test.ts src/appSession.test.ts src/panel/format.test.ts` | ✅ | ✅ green |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
@@ -56,15 +56,17 @@ Seeded from RESEARCH.md § Validation Architecture at requirement level. Task ID
 
 ## Wave 0 Requirements
 
-- [ ] `src/panel/format.test.ts` and `src/panel/format.d.ts` — pure helpers (PANEL-01..04); `format.d.ts` avoids TS7016
-- [ ] `createMemoryRepo.list` sorts and honours `before` / `beforeId` before any route-level pagination test
-- [ ] `src/admin.test.ts` — update the no-`<script` assertion (allowed on `/admin` only) and the exact `PAGE_CSP` string
-- [ ] A UAT checklist file for browser-only behaviours (dialog, history, mobile cards, download)
-- [ ] Framework install: none
+- [x] `src/panel/format.test.ts` and `src/panel/format.d.ts` — pure helpers (PANEL-01..04); `format.d.ts` avoids TS7016
+- [x] `createMemoryRepo.list` sorts and honours `before` / `beforeId` before any route-level pagination test
+- [x] `src/admin.test.ts` — update the no-`<script` assertion (allowed on `/admin` only) and the exact `PAGE_CSP` string
+- [x] A UAT checklist file for browser-only behaviours (dialog, history, mobile cards, download)
+- [x] Framework install: none
 
 ---
 
 ## Manual-Only Verifications
+
+The browser rows below are now automated in headless Chrome by `node --disable-warning=ExperimentalWarning scripts/panel-smoke.mjs` (24 checks: list-*, filter-*, more-*, pdf-row-download, dialog-*, console-clean; local aid, not in `pnpm test`/CI). Still manual: Pico styling with the CDN reachable, and Firefox/Safari history and download behaviour.
 
 | Behavior | Requirement | Why Manual | Test Instructions |
 |----------|-------------|------------|-------------------|
@@ -77,11 +79,19 @@ Seeded from RESEARCH.md § Validation Architecture at requirement level. Task ID
 
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 30s
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] All tasks have `<automated>` verify or Wave 0 dependencies
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify
+- [x] Wave 0 covers all MISSING references
+- [x] No watch-mode flags
+- [x] Feedback latency < 30s
+- [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending
+**Approval:** validated 2026-11-20 (validate-phase audit)
+
+## Validation Audit 2026-11-20
+
+| Metric | Count |
+|---|---|
+| Gaps found | 0 |
+| Resolved | 0 |
+| Escalated | 0 |
