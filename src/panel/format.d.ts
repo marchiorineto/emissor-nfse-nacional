@@ -31,3 +31,13 @@ export function takerCell(taker?: Taker): { name: string; detail: string }
 export function numberCell(nota: Pick<NotaView, 'nfseNumber' | 'dpsNumber'>): { text: string; muted: boolean }
 /** The URL of one list page: limit first, then status and the cursor after the last row shown. */
 export function listQuery(options?: { status?: string; last?: Pick<NotaView, 'createdAt' | 'id'> }): string
+/** The status named by a query string when it is a known one, otherwise '' (Todas); never throws. */
+export function parseStatus(search: string): NotaStatus | ''
+/** The query string for a status filter: '' for Todas, otherwise '?status=<status>'. */
+export function statusSearch(status: string): string
+/** Whether a page of this many notas may be followed by another: true only for a full page. */
+export function hasMore(count: number): boolean
+/** The same-origin download link of a nota's PDF, or undefined when the nota has no access key. */
+export function pdfHref(nota: Pick<NotaView, 'id' | 'accessKey'>): string | undefined
+/** The file name the download is saved as: nfse-<NFS-e number, else DPS number>.pdf. */
+export function pdfFilename(nota: Pick<NotaView, 'nfseNumber' | 'dpsNumber'>): string

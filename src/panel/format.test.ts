@@ -6,13 +6,18 @@ import {
   formatBrl,
   formatCompetence,
   formatTaxId,
+  hasMore,
   isAlertStatus,
   listDate,
   listQuery,
   numberCell,
   PAGE_SIZE,
+  parseStatus,
+  pdfFilename,
+  pdfHref,
   STATUS_ORDER,
   statusLabel,
+  statusSearch,
   takerCell,
 } from './format.js'
 import type { NotaView } from './format.d.ts'
@@ -149,5 +154,72 @@ describe('listQuery', () => {
     expect(listQuery({ status: '', last: { createdAt: '2026-11-20T12:00:00.000Z', id: 'a b&c' } })).toBe(
       '/v1/notas?limit=20&before=2026-11-20T12%3A00%3A00.000Z&beforeId=a+b%26c',
     )
+  })
+})
+
+describe('listQuery with a status and a cursor', () => {
+  it('puts limit, status and the cursor together in that order', () => {
+    expect(listQuery({ status: 'issued', last: { createdAt: '2026-11-20T12:00:00.000Z', id: 'n-21' } })).toBe(
+      '/v1/notas?limit=20&status=issued&before=2026-11-20T12%3A00%3A00.000Z&beforeId=n-21',
+    )
+  })
+})
+
+describe('parseStatus', () => {
+  it('reads a known status from the query string', () => {
+    expect(parseStatus('?status=rejected')).toBe('rejected')
+    expect(parseStatus('?status=issued&status=rejected')).toBe('issued')
+  })
+
+  it('treats no status, an unknown one and a malformed one as Todas without throwing', () => {
+    expect(parseStatus('')).toBe('')
+    expect(parseStatus('?status=bogus')).toBe('')
+    expect(parseStatus('?status=')).toBe('')
+    expect(parseStatus('?status=%E0%A4%A')).toBe('')
+    expect(parseStatus('?other=issued')).toBe('')
+  })
+})
+
+describe('statusSearch', () => {
+  it('is empty for Todas and a status query otherwise', () => {
+    expect(statusSearch('')).toBe('')
+    expect(statusSearch('canceled')).toBe('?status=canceled')
+  })
+})
+
+describe('hasMore', () => {
+  it('is true only for a full page', () => {
+    expect(hasMore(20)).toBe(true)
+    expect(hasMore(19)).toBe(false)
+    expect(hasMore(0)).toBe(false)
+  })
+})
+
+describe('pdfHref', () => {
+  it('is the relative download route of a nota with an access key', () => {
+    expect(pdfHref({ id: 'pedido-1', accessKey: 'K' })).toBe('/v1/notas/pedido-1/pdf?download=1')
+  })
+
+  it('encodes a hostile id as one path segment', () => {
+    expect(pdfHref({ id: 'loja/123 #?', accessKey: 'K' })).toBe('/v1/notas/loja%2F123%20%23%3F/pdf?download=1')
+  })
+
+  it('is undefined without an access key, whatever the status', () => {
+    expect(pdfHref({ id: 'pedido-1' })).toBeUndefined()
+    expect(pdfHref({ id: 'pedido-1', status: 'issued' } as Parameters<typeof pdfHref>[0])).toBeUndefined()
+  })
+
+  it('ignores the public links of the API response and stays on the same origin', () => {
+    const view = { id: 'pedido-1', accessKey: 'K', links: { pdf: 'https://evil.example/pdf' } }
+    const href = pdfHref(view)
+    expect(href?.startsWith('/v1/notas/')).toBe(true)
+    expect(href).not.toContain('evil.example')
+  })
+})
+
+describe('pdfFilename', () => {
+  it('names the file from the NFS-e number, else the DPS number', () => {
+    expect(pdfFilename({ nfseNumber: '7', dpsNumber: 12 })).toBe('nfse-7.pdf')
+    expect(pdfFilename({ dpsNumber: 12 })).toBe('nfse-12.pdf')
   })
 })

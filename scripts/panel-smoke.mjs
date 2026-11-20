@@ -57,12 +57,17 @@ const password = randomBytes(12).toString('hex')
 const hash = await hashPassword(password)
 const apiToken = randomBytes(16).toString('hex')
 
-/** Fixtures: 26 notas with strictly decreasing createdAt, index 0 the newest. The number shown on a row is 100 - index. */
+/**
+ * Fixtures: 45 notas, index 0 the newest. The number shown on a row is 100 - index. The 20th and 21st newest (index 19 and 20)
+ * share one createdAt, the case a page edge must not skip or repeat, and their ids sort so that index order is the list order
+ * (id descending breaks the tie). Notas from index 26 on are all issued, so the issued filter spans two pages (24 notas).
+ */
 const fixtures = () =>
-  Array.from({ length: 26 }, (_, i) => {
+  Array.from({ length: 45 }, (_, i) => {
+    const minute = i === 20 ? 40 : 59 - i
     const createdAt =
-      i < 5 ? `2026-11-20T0${9 - i}:00:00.000Z` : i === 5 ? '2026-11-20T02:30:00.000Z' : `2026-11-20T01:${String(59 - i).padStart(2, '0')}:00.000Z`
-    const status = ['issued', 'rejected', 'unknown', 'pending', 'canceled', 'replaced'][i % 6]
+      i < 5 ? `2026-11-20T0${9 - i}:00:00.000Z` : i === 5 ? '2026-11-20T02:30:00.000Z' : `2026-11-20T01:${String(minute).padStart(2, '0')}:00.000Z`
+    const status = i >= 26 ? 'issued' : ['issued', 'rejected', 'unknown', 'pending', 'canceled', 'replaced'][i % 6]
     const named = { name: `Cliente ${i}`, taxId: '11222333000181' }
     const takers = {
       0: named,
@@ -75,10 +80,10 @@ const fixtures = () =>
     const taker = i in takers ? takers[i] : named
     const issuedLike = status === 'issued' || status === 'canceled' || status === 'replaced'
     return {
-      id: `n${i}`,
+      id: `n${200 - i}`,
       status: i === 6 ? 'issued' : status,
       request: {
-        id: `n${i}`,
+        id: `n${200 - i}`,
         serviceCode: '080201',
         description: 'Aula',
         valueCents: 1000 + i * 137,
@@ -125,6 +130,12 @@ const scenario = async ({ notas = [], failList = false } = {}) => {
 
 const main = await scenario({ notas: fixtures() })
 const empty = await scenario()
+// Exactly one full page of issued notas: the "Carregar mais" click that returns an empty page, and a filter without matches.
+const exact = await scenario({
+  notas: fixtures()
+    .slice(0, 20)
+    .map((nota) => ({ ...nota, status: 'issued', accessKey: '4'.repeat(50), nfseNumber: String(nota.dpsNumber) })),
+})
 const failing = await scenario({ notas: fixtures(), failList: true })
 
 // (c) The real login: the cookie Chrome gets is the one the server issued.
@@ -188,6 +199,16 @@ const send = (method, params = {}, sessionId) =>
     pending.set(id, { resolve, reject })
     socket.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }))
   })
+
+// Downloads and tabs, recorded for the whole run: the row PDF link must save a file without opening a tab.
+const downloads = []
+const createdTargets = []
+listeners.push((message) => {
+  if (message.method === 'Browser.downloadWillBegin') downloads.push(message.params)
+  if (message.method === 'Target.targetCreated') createdTargets.push(message.params.targetInfo)
+})
+await send('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: join(profile, 'downloads'), eventsEnabled: true })
+await send('Target.setDiscoverTargets', { discover: true })
 
 const { targetId } = await send('Target.createTarget', { url: 'about:blank' })
 const { sessionId } = await send('Target.attachToTarget', { targetId, flatten: true })
@@ -362,6 +383,151 @@ await check('list-error', async () => {
   await waitFor(`document.getElementById('notas-state').textContent === 'Não foi possível carregar as notas. Tente de novo.'`)
   const rows = await evaluate(`document.querySelectorAll('#notas-body tr').length`)
   assert(rows === 0, `${rows} rows after a failed load`)
+  assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
+})
+
+/** The data-status of every row shown. */
+const rowStatuses = () => evaluate(`[...document.querySelectorAll('#notas-body tr')].map((tr) => tr.dataset.status)`)
+
+/** Waits until at least one row is shown and every row has the given status. */
+const waitForOnly = (status) =>
+  waitFor(`(() => { const rows = [...document.querySelectorAll('#notas-body tr')]; return rows.length > 0 && rows.every((tr) => tr.dataset.status === ${JSON.stringify(status)}) })()`)
+
+await check('filter-url', async () => {
+  await viewport(1280, false)
+  await goto(`${main.origin}/admin?status=rejected`)
+  await waitForOnly('rejected')
+  assert((await evaluate(`document.getElementById('status').value`)) === 'rejected', 'the select does not show rejected')
+  const request = v1Requests.find((r) => r.url.pathname === '/v1/notas')
+  assert(request?.url.searchParams.get('status') === 'rejected', `request status is "${request?.url.searchParams.get('status')}"`)
+  assert(request?.url.searchParams.get('limit') === '20', `request limit is "${request?.url.searchParams.get('limit')}"`)
+  await evaluate(`(() => { const select = document.getElementById('status'); select.value = 'issued'; select.dispatchEvent(new Event('change', { bubbles: true })) })()`)
+  await waitFor(`location.search === '?status=issued'`)
+  await waitForOnly('issued')
+  await evaluate('history.back()')
+  await waitFor(`location.search === '?status=rejected'`)
+  await waitForOnly('rejected')
+  assert((await evaluate(`document.getElementById('status').value`)) === 'rejected', 'Back left the select out of step with the URL')
+  await evaluate('window.__stale = true')
+  await page('Page.reload')
+  await waitFor(`document.readyState === 'complete' && !window.__stale`)
+  await waitForOnly('rejected')
+  assert((await evaluate('location.search')) === '?status=rejected', 'a reload lost the filter')
+  assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
+})
+
+await check('filter-invalid', async () => {
+  await goto(`${main.origin}/admin?status=bogus`)
+  await waitFor(`document.querySelectorAll('#notas-body tr').length > 0`)
+  assert((await evaluate(`document.getElementById('status').value`)) === '', 'the select does not show Todas for an unknown status')
+  assert(new Set(await rowStatuses()).size >= 2, 'an unknown status did not behave as Todas')
+  const request = v1Requests.find((r) => r.url.pathname === '/v1/notas')
+  assert(request && !request.url.searchParams.has('status'), 'the request carries a status parameter')
+  assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
+})
+
+await check('session-expired', async () => {
+  try {
+    await goto(`${main.origin}/admin`)
+    await waitFor(`document.querySelectorAll('#notas-body tr').length > 0`)
+    await page('Network.deleteCookies', { name: 'nfse_admin', url: `${main.origin}/` })
+    await evaluate(`(() => { const select = document.getElementById('status'); select.value = 'issued'; select.dispatchEvent(new Event('change', { bubbles: true })) })()`)
+    await waitFor(`location.pathname === '/login'`, 5000)
+  } finally {
+    await page('Network.setCookie', { name: 'nfse_admin', value: cookie, url: `${main.origin}/`, httpOnly: true, sameSite: 'Strict' })
+  }
+})
+
+/** Clicks Carregar mais. */
+const clickMore = () => evaluate(`document.getElementById('more').click()`)
+
+/** The number each row shows, as a list of integers. */
+const rowNumbers = async () => (await rowTexts()).map((cells) => Number(/\d+/.exec(cells[3])?.[0]))
+
+await check('more-pages', async () => {
+  const all = fixtures()
+  const expected = all.map((_, i) => 100 - i)
+  await goto(`${main.origin}/admin`)
+  await waitFor(`document.querySelectorAll('#notas-body tr').length === 20`)
+  assert((await evaluate(`document.getElementById('more').hidden`)) === false, 'Carregar mais is hidden after a full first page')
+  await clickMore()
+  await waitFor(`document.querySelectorAll('#notas-body tr').length === 40`)
+  await clickMore()
+  await waitFor(`document.querySelectorAll('#notas-body tr').length === ${all.length} && document.getElementById('more').hidden`)
+  const numbers = await rowNumbers()
+  assert(new Set(numbers).size === numbers.length, `a nota appears twice: ${numbers.join(',')}`)
+  assert(numbers.join(',') === expected.join(','), `rows are not every nota once, newest first: ${numbers.join(',')}`)
+  const lists = v1Requests.filter((r) => r.url.pathname === '/v1/notas')
+  assert(lists.length === 3, `expected 3 list requests, saw ${lists.length}`)
+  for (const [n, edge] of [[1, all[19]], [2, all[39]]]) {
+    const { searchParams } = lists[n].url
+    assert(searchParams.get('limit') === '20', `request ${n + 1}: limit is "${searchParams.get('limit')}"`)
+    assert(searchParams.get('before') === edge.createdAt, `request ${n + 1}: before is "${searchParams.get('before')}", expected ${edge.createdAt}`)
+    assert(searchParams.get('beforeId') === edge.id, `request ${n + 1}: beforeId is "${searchParams.get('beforeId')}", expected ${edge.id}`)
+    assert(!searchParams.has('status'), `request ${n + 1} carries a status`)
+  }
+  assert(all[19].createdAt === all[20].createdAt, 'the fixtures lost the createdAt tie at the page edge')
+  assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
+
+  const issued = all.filter((nota) => nota.status === 'issued')
+  await goto(`${main.origin}/admin?status=issued`)
+  await waitFor(`document.querySelectorAll('#notas-body tr').length === 20`)
+  await clickMore()
+  await waitFor(`document.querySelectorAll('#notas-body tr').length === ${issued.length} && document.getElementById('more').hidden`)
+  assert((await rowStatuses()).every((status) => status === 'issued'), 'an appended row is not issued')
+  const issuedNumbers = await rowNumbers()
+  assert(issuedNumbers.join(',') === issued.map((nota) => nota.dpsNumber).join(','), `issued rows: ${issuedNumbers.join(',')}`)
+  const filtered = v1Requests.filter((r) => r.url.pathname === '/v1/notas')
+  assert(filtered.length === 2 && filtered.every((r) => r.url.searchParams.get('status') === 'issued'), 'a page request lost the status filter')
+  assert(filtered[1].url.searchParams.get('beforeId') === issued[19].id, `second page beforeId is "${filtered[1].url.searchParams.get('beforeId')}"`)
+})
+
+await check('more-exact-page', async () => {
+  await goto(`${exact.origin}/admin`)
+  await waitFor(`document.querySelectorAll('#notas-body tr').length === 20`)
+  assert((await evaluate(`document.getElementById('more').hidden`)) === false, 'Carregar mais is hidden after a full page')
+  await clickMore()
+  await waitFor(`document.getElementById('more').hidden`)
+  const rows = await evaluate(`document.querySelectorAll('#notas-body tr').length`)
+  assert(rows === 20, `${rows} rows after the empty page, expected 20`)
+  const line = await evaluate(`document.getElementById('notas-state').textContent`)
+  assert(line === '', `the status line says "${line}"`)
+  assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
+})
+
+await check('filter-empty', async () => {
+  await goto(`${exact.origin}/admin?status=rejected`)
+  await waitFor(`document.getElementById('notas-state').textContent === 'Nenhuma nota encontrada.'`)
+  assert((await evaluate(`document.querySelectorAll('#notas-body tr').length`)) === 0, 'rows shown for a filter without matches')
+  assert((await evaluate(`document.getElementById('more').hidden`)) === true, 'Carregar mais is visible for an empty list')
+  assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
+})
+
+await check('pdf-row-download', async () => {
+  await goto(`${main.origin}/admin`)
+  await waitFor(`document.querySelectorAll('#notas-body tr').length === 20`)
+  const links = await evaluate(`[...document.querySelectorAll('#notas-body tr')].map((tr) => {
+    const a = tr.querySelector('a[download]')
+    return { status: tr.dataset.status, number: tr.children[3].textContent, href: a?.getAttribute('href') ?? null, download: a?.getAttribute('download') ?? null, label: a?.getAttribute('aria-label') ?? null }
+  })`)
+  for (const row of links) {
+    if (['pending', 'rejected', 'unknown'].includes(row.status)) assert(row.href === null, `a ${row.status} row has a PDF link (${row.href})`)
+    else {
+      assert(/^\/v1\/notas\/[^/]+\/pdf\?download=1$/.test(row.href ?? ''), `${row.status} row ${row.number}: href is "${row.href}"`)
+      assert(row.download === `nfse-${/\d+/.exec(row.number)?.[0]}.pdf`, `${row.number}: download is "${row.download}"`)
+      assert(row.label === `Baixar PDF da ${row.number}`, `${row.number}: aria-label is "${row.label}"`)
+    }
+  }
+  const issued = links.find((row) => row.status === 'issued' && row.href)
+  assert(issued, 'no issued row with a PDF link')
+  const before = { downloads: downloads.length, targets: createdTargets.length }
+  await evaluate(`document.querySelector('#notas-body tr[data-status="issued"] a[download]').click()`)
+  for (let wait = 0; wait < 100 && downloads.length === before.downloads; wait++) await new Promise((resolve) => setTimeout(resolve, 50))
+  const started = downloads[before.downloads]
+  const expected = `nfse-${/\d+/.exec(issued.number)?.[0]}.pdf`
+  assert(started?.suggestedFilename === expected, `download starts as "${started?.suggestedFilename}", expected ${expected}`)
+  assert((await evaluate('location.pathname')) === '/admin', 'the page left /admin')
+  assert(createdTargets.length === before.targets, `a new target opened: ${createdTargets.slice(before.targets).map((t) => `${t.type} ${t.url}`).join(', ')}`)
   assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
 })
 

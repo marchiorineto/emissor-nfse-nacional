@@ -415,6 +415,19 @@ describe('panel security headers', () => {
     expect(body).toContain('<h2>Notas</h2>')
     expect(body).toContain('<p id="notas-state" role="status"></p>')
     expect(body).toContain('<tbody id="notas-body"></tbody>')
+    expect(body).toContain('<label for="status">Situação</label>')
+    const select = /<select id="status"[^>]*>([\s\S]*?)<\/select>/.exec(body)?.[1] ?? ''
+    const options = [...select.matchAll(/<option value="([^"]*)">([^<]*)<\/option>/g)].map((match) => [match[1], match[2]])
+    expect(options).toEqual([
+      ['', 'Todas'],
+      ['issued', 'Emitida'],
+      ['rejected', 'Rejeitada'],
+      ['canceled', 'Cancelada'],
+      ['replaced', 'Substituída'],
+      ['pending', 'Pendente'],
+      ['unknown', 'Sem resposta'],
+    ])
+    expect(body).toContain('<button type="button" id="more" hidden>Carregar mais</button>')
     expect(body).toMatch(
       /<th[^>]*>Competência<\/th>\s*<th[^>]*>Cliente<\/th>\s*<th[^>]*>Valor<\/th>\s*<th[^>]*>Número<\/th>\s*<th[^>]*>Situação<\/th>\s*<th[^>]*>PDF<\/th>/,
     )

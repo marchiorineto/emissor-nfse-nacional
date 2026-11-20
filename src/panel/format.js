@@ -75,3 +75,25 @@ export const listQuery = ({ status, last } = {}) => {
   }
   return `/v1/notas?${params}`
 }
+
+/** Whether a page of this many notas may be followed by another: only a full page can (D-02). */
+export const hasMore = (count) => count >= PAGE_SIZE
+
+/** The status the URL's query string asks for when it is one of STATUS_ORDER, otherwise '' (Todas); a malformed value never throws. */
+export const parseStatus = (search) => {
+  const status = new URLSearchParams(search).get('status')
+  return STATUS_ORDER.includes(status) ? status : ''
+}
+
+/** The query string that selects a status: '' for Todas, otherwise '?status=<status>'. */
+export const statusSearch = (status) => (status ? `?${new URLSearchParams({ status })}` : '')
+
+/**
+ * The download link of a nota's PDF, or undefined when the nota has no access key (D-18, D-20). It is relative and same-origin
+ * on purpose: the `download` attribute only works same-origin, and the signed public links in the API response are built from
+ * PUBLIC_URL and may point at another origin, so they are never read here.
+ */
+export const pdfHref = (nota) => (nota.accessKey ? `/v1/notas/${encodeURIComponent(nota.id)}/pdf?download=1` : undefined)
+
+/** The name the PDF is saved as, the same one the server's download answer carries: nfse-<NFS-e number, else DPS number>.pdf. */
+export const pdfFilename = (nota) => `nfse-${nota.nfseNumber ?? nota.dpsNumber}.pdf`
