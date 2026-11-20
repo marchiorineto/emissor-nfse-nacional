@@ -166,6 +166,26 @@ describe('admin guard and logout', () => {
   })
 })
 
+describe('login throttle', () => {
+  afterEach(() => {
+    clock.ms = Date.UTC(2026, 10, 20, 12)
+  })
+
+  it('answers 429 with Retry-After before checking the password, per address, and lets the address back in after the delay', async () => {
+    const app = setup()
+    const wrong = await login(app, 'wrong password 12', { 'x-forwarded-for': '198.51.100.1' })
+    expect(wrong.status).toBe(401)
+    const blocked = await login(app, PASSWORD, { 'x-forwarded-for': '198.51.100.1' })
+    expect(blocked.status).toBe(429)
+    expect(blocked.headers.get('retry-after')).toBe('1')
+    expect(await blocked.text()).toContain('Muitas tentativas')
+    expect(blocked.headers.get('set-cookie')).toBeNull()
+    expect((await login(app, PASSWORD, { 'x-forwarded-for': '198.51.100.2' })).status).toBe(303)
+    clock.ms += 1000
+    expect((await login(app, PASSWORD, { 'x-forwarded-for': '198.51.100.1' })).status).toBe(303)
+  })
+})
+
 const START = Date.UTC(2026, 10, 20, 12)
 
 describe('session cookie flags, expiry and edge cases', () => {

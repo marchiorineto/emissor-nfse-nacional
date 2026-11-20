@@ -4,7 +4,17 @@ import { html } from 'hono/html'
 import type { HtmlEscapedString } from 'hono/utils/html'
 import type { Env } from './env.ts'
 import { verifyPassword } from './password.ts'
-import { csrfToken, isHttps, issueSession, readSession, SESSION_COOKIE, SESSION_SECONDS, timingSafeEqual } from './session.ts'
+import {
+  clientIp,
+  createLoginThrottle,
+  csrfToken,
+  isHttps,
+  issueSession,
+  readSession,
+  SESSION_COOKIE,
+  SESSION_SECONDS,
+  timingSafeEqual,
+} from './session.ts'
 
 /** Pico.css, pinned to an exact version and loaded with its Subresource Integrity hash (nothing is vendored). */
 export const PICO_CSS_URL = 'https://cdn.jsdelivr.net/npm/@picocss/pico@2.1.1/css/pico.min.css'
@@ -78,13 +88,26 @@ const adminPage = (cnpj: string, environment: string, csrf: string): Html =>
 /** Registers the panel's routes. Called only when ADMIN_PASSWORD is set, so with the panel off they answer the plain 404. */
 export const registerAdmin = (app: Hono, { env, key, now }: AdminDeps): void => {
   const sessionOf = (cookie: string | undefined) => readSession(key, cookie, now())
+  const throttle = createLoginThrottle({ now })
 
   app.get('/login', (c) => (sessionOf(getCookie(c, SESSION_COOKIE)) ? c.redirect('/admin', 303) : c.html(loginPage())))
 
   app.post('/login', async (c) => {
-    const form = await c.req.parseBody().catch(() => ({}) as Record<string, unknown>)
-    const password = typeof form.password === 'string' ? form.password : ''
-    if (!(await verifyPassword(password, env.ADMIN_PASSWORD))) return c.html(loginPage('Senha incorreta.'), 401)
+    const ip = clientIp(c)
+    const wait = throttle.begin(ip)
+    if (wait > 0) {
+      c.header('Retry-After', String(wait))
+      return c.html(loginPage(`Muitas tentativas. Tente de novo em ${wait} s.`), 429)
+    }
+    let ok = false
+    try {
+      const form = await c.req.parseBody().catch(() => ({}) as Record<string, unknown>)
+      const password = typeof form.password === 'string' ? form.password : ''
+      ok = await verifyPassword(password, env.ADMIN_PASSWORD)
+      if (!ok) return c.html(loginPage('Senha incorreta.'), 401)
+    } finally {
+      throttle.end(ip, ok)
+    }
     const { value } = issueSession(key, now())
     setCookie(c, SESSION_COOKIE, value, {
       httpOnly: true,
