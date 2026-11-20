@@ -123,6 +123,16 @@ const adminPage = (cnpj: string, environment: string, csrf: string): Html =>
     csrf,
   )
 
+/** A refused request as a styled page with one link back. Only fixed strings reach it: no request header or body is echoed. */
+const refusalPage = (heading: string, href: '/login' | '/admin', label: string): Html =>
+  layout(
+    `${heading} – Emissor de NFS-e`,
+    html`<main>
+      <h1>${heading}</h1>
+      <p><a href="${href}">${label}</a></p>
+    </main>`,
+  )
+
 /**
  * Whether a login post comes from this site (D-17, a deliberate superset of what D-17 refuses). Sec-Fetch-Site decides when
  * the browser sends it; otherwise Origin must name this server, PUBLIC_URL or the proxy's forwarded origin, and the
@@ -170,8 +180,8 @@ export const registerAdmin = (app: Hono, { env, key, now }: AdminDeps): void => 
   app.get('/login', (c) => (sessionOf(getCookie(c, SESSION_COOKIE)) ? c.redirect('/admin', 303) : c.html(loginPage())))
 
   // Order: body limit, cross-site check, throttle, parse, verify. Refused posts run no scrypt and count as no failure.
-  app.post('/login', bodyLimit({ maxSize: 4 * 1024, onError: (c) => c.text('Pedido grande demais.', 413) }), async (c) => {
-    if (!sameOriginLogin(c, env.PUBLIC_URL)) return c.text('Pedido recusado.', 403)
+  app.post('/login', bodyLimit({ maxSize: 4 * 1024, onError: (c) => c.html(refusalPage('Pedido grande demais', '/login', 'Voltar ao login'), 413) }), async (c) => {
+    if (!sameOriginLogin(c, env.PUBLIC_URL)) return c.html(refusalPage('Pedido recusado', '/login', 'Voltar ao login'), 403)
     const ip = clientIp(c)
     const wait = throttle.begin(ip)
     if (wait > 0) {
@@ -215,7 +225,7 @@ export const registerAdmin = (app: Hono, { env, key, now }: AdminDeps): void => 
     if (!session) return clear()
     const form = await c.req.parseBody().catch(() => ({}) as Record<string, unknown>)
     const csrf = typeof form.csrf === 'string' ? form.csrf : ''
-    if (!timingSafeEqual(csrf, csrfToken(key, session.id))) return c.text('Sessão expirada ou formulário inválido. Recarregue a página.', 403)
+    if (!timingSafeEqual(csrf, csrfToken(key, session.id))) return c.html(refusalPage('Sessão expirada ou formulário inválido', '/admin', 'Voltar ao painel'), 403)
     return clear()
   })
 
