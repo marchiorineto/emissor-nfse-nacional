@@ -75,7 +75,53 @@ describe('admin login', () => {
     const body = await res.text()
     expect(body).toContain('Senha incorreta.')
     expect(body).not.toContain('wrong password 12')
+    expect(body).not.toMatch(/<input[^>]*\svalue=/)
     expect(res.headers.get('set-cookie')).toBeNull()
+  })
+
+  it('marks the password field invalid after a wrong password, with the message tied to it', async () => {
+    const body = await (await login(setup(), 'wrong password 12')).text()
+    expect(body).toContain('aria-invalid="true"')
+    expect(body).toContain('aria-describedby="login-error"')
+    expect(body).toContain('<small id="login-error" role="alert">Senha incorreta.</small>')
+  })
+
+  it('shows the login form with one product name, a labelled field and no error state', async () => {
+    const body = await (await setup().request('http://api.test/login')).text()
+    for (const text of ['<h1>Emissor de NFS-e</h1>', 'for="password"', 'id="password"', '<title>Entrar – Emissor de NFS-e</title>']) {
+      expect(body).toContain(text)
+    }
+    expect(body).not.toContain('aria-invalid')
+    expect(body).not.toContain('login-error')
+    expect(body).not.toContain('Painel do emissor')
+  })
+
+  it('renders a nav header on /admin with the labelled CNPJ, the light homologação badge and a compact Sair', async () => {
+    const app = setup()
+    const { cookie } = await session(app)
+    const body = await (await app.request('http://api.test/admin', { headers: { cookie } })).text()
+    for (const text of [
+      '<nav>',
+      '<hgroup>',
+      '<h1>Emissor de NFS-e</h1>',
+      'CNPJ 11.222.333/0001-81',
+      '<mark data-theme="light">Homologação (produção restrita)</mark>',
+      '<button>Sair</button>',
+      'name="csrf" value="',
+      '<meta name="csrf-token" content="',
+    ]) {
+      expect(body).toContain(text)
+    }
+    expect(body.match(/<h1>/g)).toHaveLength(1)
+    expect(body).not.toContain('data-theme="dark"')
+  })
+
+  it('renders produção as a strong dark badge', async () => {
+    const app = setup({ NFSE_ENVIRONMENT: 'production' })
+    const { cookie } = await session(app)
+    const body = await (await app.request('http://api.test/admin', { headers: { cookie } })).text()
+    expect(body).toContain('<strong><mark data-theme="dark">Produção</mark></strong>')
+    expect(body).not.toContain('data-theme="light"')
   })
 })
 
@@ -178,7 +224,11 @@ describe('login throttle', () => {
     const blocked = await login(app, PASSWORD, { 'x-forwarded-for': '198.51.100.1' })
     expect(blocked.status).toBe(429)
     expect(blocked.headers.get('retry-after')).toBe('1')
-    expect(await blocked.text()).toContain('Muitas tentativas')
+    const blockedBody = await blocked.text()
+    expect(blockedBody).toContain('Muitas tentativas')
+    expect(blockedBody).toContain('aria-describedby="login-error"')
+    expect(blockedBody).toContain('<small id="login-error" role="alert">Muitas tentativas. Tente de novo em 1 s.</small>')
+    expect(blockedBody).not.toContain('aria-invalid')
     expect(blocked.headers.get('set-cookie')).toBeNull()
     expect((await login(app, PASSWORD, { 'x-forwarded-for': '198.51.100.2' })).status).toBe(303)
     clock.ms += 1000
