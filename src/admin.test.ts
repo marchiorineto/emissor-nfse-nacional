@@ -77,3 +77,90 @@ describe('admin login', () => {
     expect(res.headers.get('set-cookie')).toBeNull()
   })
 })
+
+/** Logs in and returns the cookie pair plus the CSRF field of the panel page. */
+const session = async (app: ReturnType<typeof setup>) => {
+  const cookie = cookieOf(await login(app, PASSWORD)) ?? ''
+  const page = await (await app.request('http://api.test/admin', { headers: { cookie } })).text()
+  return { cookie, csrf: /name="csrf" value="([^"]+)"/.exec(page)?.[1] ?? '' }
+}
+
+const logout = (app: ReturnType<typeof setup>, headers: Record<string, string>, csrf?: string) =>
+  app.request('http://api.test/logout', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded', ...headers },
+    body: new URLSearchParams(csrf === undefined ? {} : { csrf }),
+  })
+
+describe('admin guard and logout', () => {
+  it('answers the plain 404 of an unknown path on every admin route when the panel is off', async () => {
+    const app = setup({ ADMIN_PASSWORD: '' })
+    const unknown = await app.request('http://api.test/no-such-page')
+    const unknownBody = await unknown.text()
+    const responses = [
+      await app.request('http://api.test/login'),
+      await login(app, PASSWORD),
+      await app.request('http://api.test/admin'),
+      await logout(app, {}, 'x'),
+    ]
+    for (const res of responses) {
+      expect(res.status).toBe(404)
+      expect(res.headers.get('content-type')).toBe(unknown.headers.get('content-type'))
+      expect(await res.text()).toBe(unknownBody)
+    }
+  })
+
+  it('treats a whitespace-only ADMIN_PASSWORD as empty', async () => {
+    const app = createApp({ env: envFrom({ ADMIN_PASSWORD: '   ', API_TOKEN: TOKEN }), repo: createMemoryRepo(), gov, certificate: () => ({ error: 'none' }) })
+    expect((await app.request('http://api.test/login')).status).toBe(404)
+  })
+
+  it('redirects /admin to /login without a valid session', async () => {
+    const app = setup()
+    const { cookie } = await session(app)
+    const tampered = `${cookie.slice(0, -1)}${cookie.endsWith('A') ? 'B' : 'A'}`
+    for (const header of [undefined, 'nfse_admin=', 'nfse_admin=x', tampered]) {
+      const res = await app.request('http://api.test/admin', { headers: header === undefined ? {} : { cookie: header } })
+      expect(res.status).toBe(303)
+      expect(res.headers.get('location')).toBe('/login')
+    }
+  })
+
+  it('shows the form without a session and redirects GET /login to /admin with one', async () => {
+    const app = setup()
+    expect((await app.request('http://api.test/login')).status).toBe(200)
+    const { cookie } = await session(app)
+    const res = await app.request('http://api.test/login', { headers: { cookie } })
+    expect(res.status).toBe(303)
+    expect(res.headers.get('location')).toBe('/admin')
+  })
+
+  it('logs out with the page CSRF token: clears the cookie and redirects to /login', async () => {
+    const app = setup()
+    const { cookie, csrf } = await session(app)
+    const res = await logout(app, { cookie }, csrf)
+    expect(res.status).toBe(303)
+    expect(res.headers.get('location')).toBe('/login')
+    expect(res.headers.get('set-cookie')).toBe('nfse_admin=; Max-Age=0; Path=/')
+  })
+
+  it('refuses a logout with a wrong CSRF token (403, cookie untouched)', async () => {
+    const app = setup()
+    const { cookie } = await session(app)
+    const res = await logout(app, { cookie }, 'wrong')
+    expect(res.status).toBe(403)
+    expect(res.headers.get('set-cookie')).toBeNull()
+  })
+
+  it('redirects a logout without a session to /login', async () => {
+    const res = await logout(setup(), {}, 'x')
+    expect(res.status).toBe(303)
+    expect(res.headers.get('location')).toBe('/login')
+  })
+
+  it('does not log out on GET', async () => {
+    const app = setup()
+    const { cookie } = await session(app)
+    expect((await app.request('http://api.test/logout', { headers: { cookie } })).status).toBe(404)
+  })
+})
