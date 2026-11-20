@@ -186,6 +186,14 @@ describe('login throttle', () => {
   })
 })
 
+describe('login throttle, parallel attempts', () => {
+  it('checks only one of three simultaneous wrong-password posts from one address', async () => {
+    const app = setup()
+    const statuses = (await Promise.all([1, 2, 3].map(() => login(app, 'wrong password 12', { 'x-forwarded-for': '198.51.100.9' })))).map((res) => res.status)
+    expect(statuses.sort()).toEqual([401, 429, 429])
+  })
+})
+
 const START = Date.UTC(2026, 10, 20, 12)
 
 describe('session cookie flags, expiry and edge cases', () => {
