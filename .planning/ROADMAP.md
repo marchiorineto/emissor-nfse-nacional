@@ -39,8 +39,13 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans:** 4 plans
 
 Plans:
+**Wave 1**
 - [ ] 01-01-PLAN.md — Password module (`src/password.ts`) and `pnpm run admin-password` script writing a scrypt hash to `.env` (wave 1)
+
+**Wave 2** *(blocked on Wave 1 completion)*
 - [ ] 01-02-PLAN.md — Login, signed session cookie, `/admin` skeleton, logout, 404 when disabled (wave 2)
+
+**Wave 3** *(blocked on Wave 2 completion)*
 - [ ] 01-03-PLAN.md — Login hardening: per-IP 429 backoff, cross-site check, body limit, page security headers (wave 3)
 - [ ] 01-04-PLAN.md — `/v1` and `/health` through the session cookie with CSRF, Bearer priority, startup notice, README (wave 3)
 **UI hint**: yes

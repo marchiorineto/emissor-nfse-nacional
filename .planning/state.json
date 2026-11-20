@@ -1,12 +1,28 @@
 {
   "contract": "1.0.0",
   "flavor": "core",
-  "milestone": null,
-  "phases": [],
+  "milestone": "v1.0 — Painel administrativo",
+  "phases": [
+    {
+      "number": "1",
+      "name": "Admin Password and Login",
+      "status": "pending"
+    },
+    {
+      "number": "2",
+      "name": "Notas Panel",
+      "status": "pending"
+    },
+    {
+      "number": "3",
+      "name": "Nota Actions",
+      "status": "pending"
+    }
+  ],
   "next": {
-    "command": "/gsd-discuss-phase",
-    "label": "Discuss the first phase",
-    "reason": "Project initialized — plan your first phase"
+    "command": "/gsd-progress --next",
+    "label": "Advance to the next step",
+    "reason": "Phase 1 of 3 · executing"
   },
-  "updated_at": "2026-11-20T18:54:55.979Z"
+  "updated_at": "2026-11-20T19:51:01.565Z"
 }
