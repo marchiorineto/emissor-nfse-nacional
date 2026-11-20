@@ -1,6 +1,24 @@
 // The panel's browser module: reads GET /v1/notas with the session cookie and renders the list.
 // Every API string reaches the DOM through textContent; nothing here ever parses markup or sets a style.
-import { formatBrl, hasMore, isAlertStatus, listDate, listQuery, notaHash, numberCell, parseNotaHash, parseStatus, pdfFilename, pdfHref, statusLabel, statusSearch, takerCell } from './format.js'
+import {
+  detailSections,
+  errorBoxes,
+  formatBrl,
+  hasMore,
+  isAlertStatus,
+  listDate,
+  listQuery,
+  notaHash,
+  numberCell,
+  parseNotaHash,
+  parseStatus,
+  pdfFilename,
+  pdfHref,
+  statusLabel,
+  statusNotice,
+  statusSearch,
+  takerCell,
+} from './format.js'
 
 const body = document.getElementById('notas-body')
 const state = document.getElementById('notas-state')
@@ -134,18 +152,58 @@ const renderNota = (nota) => {
   label.dataset.status = nota.status
   dialogStatus.replaceChildren(label)
 
-  const section = document.createElement('section')
-  section.append(text('h3', 'Resumo'))
-  const list = document.createElement('dl')
-  for (const [name, value] of [
-    ['Situação', statusLabel(nota.status)],
-    ['Valor', formatBrl(nota.request.valueCents)],
-    ['Identificador', nota.id],
-  ]) {
-    list.append(text('dt', name), text('dd', value))
+  const parts = []
+  const notice = statusNotice(nota)
+  if (notice) {
+    const note = text('p', notice)
+    note.setAttribute('role', 'note')
+    parts.push(note)
   }
-  section.append(list)
-  dialogBody.replaceChildren(section)
+  for (const box of errorBoxes(nota)) {
+    const section = document.createElement('section')
+    section.dataset.errors = ''
+    section.append(text('h3', box.heading))
+    const list = document.createElement('ul')
+    for (const error of box.errors) {
+      const item = document.createElement('li')
+      item.append(text('strong', error.code), ' ', error.message)
+      if (error.detail) item.append(' ', text('small', error.detail))
+      list.append(item)
+    }
+    section.append(list)
+    parts.push(section)
+  }
+  for (const { title, rows } of detailSections(nota)) {
+    const section = document.createElement('section')
+    section.append(text('h3', title))
+    const list = document.createElement('dl')
+    for (const [name, value] of rows) list.append(text('dt', name), detailValue(value))
+    section.append(list)
+    parts.push(section)
+  }
+  dialogBody.replaceChildren(...parts)
+}
+
+/** The prefixes a link in the dialog may start with: a nota's hash, the same-origin PDF route, an https page. Anything else is shown as plain text. */
+const LINK_PREFIXES = ['#nota=', '/v1/notas/', 'https://']
+
+/** The dd of one detail row: text through textContent, or a link only when its href starts with an allowed prefix. */
+const detailValue = (value) => {
+  if (typeof value === 'string') return text('dd', value)
+  const dd = text('dd', '')
+  if (!LINK_PREFIXES.some((prefix) => value.href.startsWith(prefix))) {
+    dd.textContent = value.text
+    return dd
+  }
+  const link = text('a', value.text)
+  link.href = value.href
+  if (value.download) link.download = value.download
+  if (value.external) {
+    link.target = '_blank'
+    link.rel = 'noopener noreferrer'
+  }
+  dd.append(link)
+  return dd
 }
 
 /** Opens the dialog on a nota: shows it at once as loading, then fills it with GET /v1/notas/<id>; a stale response is dropped. */

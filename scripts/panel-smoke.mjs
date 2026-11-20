@@ -98,6 +98,56 @@ const fixtures = () =>
     }
   })
 
+/**
+ * Fixtures of the details dialog, served by their own app so the list fixtures above (and the paging maths built on them) stay
+ * as they are: a rejected nota whose two errors include a hostile message, an issued nota with errors and cancelErrors, an
+ * export nota that replaces another seeded nota, that replaced nota pointing back, a canceled nota and the two unanswered states.
+ */
+const detailFixtures = () => {
+  const base = (id, index, status, extra = {}) => ({
+    id,
+    status,
+    request: {
+      id,
+      serviceCode: '080201',
+      nbsCode: '123012100',
+      description: 'Aula de violão',
+      valueCents: 123456,
+      competence: '2026-11-19',
+      taker: { name: 'Acme Ltda', taxId: '11222333000181', email: 'contato@acme.test', phone: '11999990000' },
+      ...extra.request,
+    },
+    dpsNumber: 300 + index,
+    dpsId: `DPS${300 + index}`,
+    createdAt: `2026-11-20T0${index}:00:00.000Z`,
+    updatedAt: `2026-11-20T0${index}:00:00.000Z`,
+    ...(['issued', 'canceled', 'replaced'].includes(status) ? { accessKey: '4'.repeat(50), nfseNumber: String(300 + index), issuedAt: '2026-11-20T15:30:00Z' } : {}),
+    ...Object.fromEntries(Object.entries(extra).filter(([key]) => key !== 'request')),
+  })
+  return [
+    base('rej', 1, 'rejected', {
+      errors: [
+        { code: 'E0014', message: 'DPS duplicada', detail: 'Complemento do erro' },
+        { code: 'HTTP 403', message: HOSTILE },
+      ],
+    }),
+    base('both', 2, 'issued', {
+      errors: [{ code: 'E0001', message: 'Primeira tentativa recusada' }],
+      cancelErrors: [{ code: 'E0777', message: 'Cancelamento recusado', detail: 'Fora do prazo' }],
+    }),
+    base('exp', 3, 'issued', {
+      request: {
+        export: { resultCountry: 'US', currency: '220', foreignValueCents: 25000, mode: '1', relationship: '0', shareWithMdic: false },
+        replaces: { id: 'old', reasonCode: '01' },
+      },
+    }),
+    base('old', 4, 'replaced', { replacedBy: 'exp' }),
+    base('can', 5, 'canceled', { canceledAt: '2026-11-21T15:30:00Z' }),
+    base('pend', 6, 'pending'),
+    base('unk', 7, 'unknown'),
+  ]
+}
+
 /** Serves one app on a free 127.0.0.1 port; scenarios share the password hash, so one session cookie works on every port. */
 const scenario = async ({ notas = [], failList = false } = {}) => {
   const base = createSqliteRepo(openDatabase(':memory:'))
@@ -137,6 +187,7 @@ const exact = await scenario({
     .map((nota) => ({ ...nota, status: 'issued', accessKey: '4'.repeat(50), nfseNumber: String(nota.dpsNumber) })),
 })
 const failing = await scenario({ notas: fixtures(), failList: true })
+const detail = await scenario({ notas: detailFixtures() })
 
 // (c) The real login: the cookie Chrome gets is the one the server issued.
 const loginRes = await fetch(`${main.origin}/login`, {
@@ -605,6 +656,87 @@ await check('dialog-unknown', async () => {
   await goto(`${main.origin}/admin#nota=nao-existe`)
   await waitFor(`document.getElementById('nota-title').textContent === 'Nota não encontrada.'`)
   assert(await dialogOpen(), 'the dialog is not open for an unknown id')
+  assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
+})
+
+/** Opens a nota's dialog by deep link and waits until its title is not the loading text. */
+const openDeepLink = async (id) => {
+  await goto(`${detail.origin}/admin#nota=${encodeURIComponent(id)}`)
+  await waitFor(`document.getElementById('nota-dialog').open && !/^Carregando/.test(document.getElementById('nota-title').textContent)`)
+}
+
+await check('dialog-sections', async () => {
+  await viewport(1280, false)
+  await openDeepLink('exp')
+  const titles = await evaluate(`[...document.querySelectorAll('#nota-body h3')].map((h) => h.textContent)`)
+  assert(titles.join(',') === 'Resumo,Tomador,Serviço,Documento,Exportação,Substituição', `sections are: ${titles.join(',')}`)
+  const pairs = await evaluate(`[...document.querySelectorAll('#nota-body dl')].every((dl) => [...dl.children].every((el, i) => el.tagName === (i % 2 === 0 ? 'DT' : 'DD')))`)
+  assert(pairs, 'a dl does not alternate dt and dd')
+  const resumo = await evaluate(`[...document.querySelector('#nota-body dl').children].map((el) => el.textContent)`)
+  for (const label of ['Situação', 'Número da NFS-e', 'Número da DPS', 'Valor', 'Criada em', 'Emitida em', 'Identificador']) assert(resumo.includes(label), `Resumo lacks ${label}`)
+  assert((await evaluate(`document.querySelector('#nota-body a[href="#nota=old"]')?.textContent`)) === 'old', 'the Substitui link is missing')
+  await evaluate(`document.querySelector('#nota-body a[href="#nota=old"]').click()`)
+  await waitFor(`document.getElementById('nota-title').textContent === 'NFS-e 304'`)
+  assert(await dialogOpen(), 'the dialog closed when following the Substitui link')
+  assert((await evaluate('location.hash')) === '#nota=old', 'the hash did not follow the link')
+  const back = await evaluate(`document.querySelector('#nota-body a[href="#nota=exp"]')?.textContent`)
+  assert(back === 'exp', 'the replaced nota does not link back to its replacement')
+  assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
+})
+
+await check('dialog-errors', async () => {
+  await openDeepLink('both')
+  const boxes = await evaluate(`[...document.querySelectorAll('#nota-body > section[data-errors]')].map((s) => s.querySelector('h3').textContent)`)
+  assert(boxes.join('|') === 'Erros na emissão|Erros no cancelamento', `error boxes are: ${boxes.join('|')}`)
+  const first = await evaluate(`[...document.getElementById('nota-body').children].slice(0, 2).map((el) => el.hasAttribute('data-errors'))`)
+  assert(first.every(Boolean), 'the error boxes are not the first blocks of the dialog')
+  await openDeepLink('rej')
+  const text = await evaluate(`document.getElementById('nota-body').querySelector('section[data-errors]').textContent`)
+  for (const part of ['E0014', 'DPS duplicada', 'Complemento do erro', 'HTTP 403', HOSTILE]) assert(text.includes(part), `the error box lacks "${part}"`)
+  const items = await evaluate(`document.querySelectorAll('#nota-body section[data-errors] li').length`)
+  assert(items === 2, `${items} error entries, expected 2`)
+  assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
+})
+
+await check('dialog-hostile-text', async () => {
+  await openDeepLink('rej')
+  const shown = await evaluate(`document.getElementById('nota-dialog').innerText`)
+  assert(shown.includes(HOSTILE), 'the hostile message is not visible as text')
+  assert((await evaluate(`document.querySelectorAll('#nota-dialog img').length`)) === 0, 'an img element exists in the dialog')
+  assert((await evaluate('document.title')) === TITLE, `document.title changed to "${await evaluate('document.title')}"`)
+  assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
+})
+
+await check('dialog-pdf', async () => {
+  await openDeepLink('both')
+  const link = await evaluate(`(() => { const a = document.querySelector('#nota-body a[download]'); return a && { href: a.getAttribute('href'), download: a.getAttribute('download') } })()`)
+  assert(link?.href === '/v1/notas/both/pdf?download=1' && link.download === 'nfse-302.pdf', `PDF link is ${JSON.stringify(link)}`)
+  const before = { downloads: downloads.length, targets: createdTargets.length }
+  await evaluate(`document.querySelector('#nota-body a[download]').click()`)
+  for (let wait = 0; wait < 100 && downloads.length === before.downloads; wait++) await new Promise((resolve) => setTimeout(resolve, 50))
+  assert(downloads[before.downloads]?.suggestedFilename === 'nfse-302.pdf', `download starts as "${downloads[before.downloads]?.suggestedFilename}"`)
+  assert(createdTargets.length === before.targets, 'a new target opened')
+  assert(await dialogOpen(), 'the dialog closed after the download')
+
+  await openDeepLink('can')
+  const canceled = await evaluate(`document.getElementById('nota-body').textContent`)
+  assert(canceled.includes('Este documento não é mais válido: a nota foi cancelada.'), 'the canceled nota lacks the no-longer-valid notice')
+  assert((await evaluate(`document.querySelectorAll('#nota-body a[download]').length`)) === 1, 'the canceled nota lost its PDF link')
+  const order = await evaluate(`(() => { const note = document.querySelector('#nota-body [role="note"]'); const a = document.querySelector('#nota-body a[download]'); return note.compareDocumentPosition(a) & Node.DOCUMENT_POSITION_FOLLOWING })()`)
+  assert(order, 'the notice does not come before the PDF link')
+
+  await openDeepLink('old')
+  assert((await evaluate(`document.getElementById('nota-body').textContent`)).includes('Este documento não é mais válido: a nota foi substituída.'), 'the replaced nota lacks its notice')
+
+  for (const id of ['pend', 'unk']) {
+    await openDeepLink(id)
+    const body = await evaluate(`document.getElementById('nota-body').textContent`)
+    assert(body.includes('O governo não respondeu. A nota será verificada quando o sistema de origem reenviar este id.'), `${id}: the D-16a notice is missing`)
+    assert((await evaluate(`document.querySelectorAll('#nota-body a[download]').length`)) === 0, `${id}: a PDF link is shown`)
+    const buttons = await evaluate(`[...document.querySelectorAll('#nota-dialog button')].map((b) => b.textContent)`)
+    assert(buttons.join(',') === 'Fechar', `${id}: buttons are ${buttons.join(',')}`)
+    assert((await evaluate(`document.querySelectorAll('#nota-body a').length`)) === 0, `${id}: the dialog body offers links`)
+  }
   assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
 })
 
