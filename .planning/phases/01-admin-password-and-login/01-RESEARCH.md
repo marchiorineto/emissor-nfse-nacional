@@ -481,15 +481,18 @@ Hash in tests costs ~0.4 s each at production parameters; create it once per fil
 | A3 | Chrome/Firefox keep `Secure` cookies on `http://localhost`, Safari does not | Pattern 9 | Low; affects local manual testing only. |
 | A4 | 401 (not 200) on wrong password is acceptable although RFC 9110 expects `WWW-Authenticate` with 401 | Pattern 4/Login | Low; D-14 leaves 401/200 to the planner. Recommend 401 for clarity in tests and logs. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Does the planner accept the refinement of D-17 (Sec-Fetch-Site first, Origin fallback, accept when both are absent)?**
    - What we know: it refuses a superset of what D-17 refuses and survives a proxy rewriting `Host`.
    - What's unclear: whether "accept when neither header exists" is wanted (curl tests need it).
    - Recommendation: accept, and cover all three branches in tests.
+   - **RESOLVED:** accepted. `POST /login` checks `Sec-Fetch-Site` first (`same-origin` and `none` pass; `cross-site` and `same-site` get 403 `Pedido recusado.`), falls back to `Origin` only when `Sec-Fetch-Site` is absent (`null` and foreign origins refused), and proceeds when neither header exists. Implemented by plan 01-03 Task 3 (`sameOriginLogin`), with tests for all three branches.
 2. **Should a malformed non-empty `ADMIN_PASSWORD` disable the panel or fail closed with login always failing?**
    - Recommendation: keep the routes (so the operator sees `/login`), make every login fail, and log a startup warning in `src/server.ts` ("nfse: ADMIN_PASSWORD is not a valid hash; run pnpm run admin-password"). Whitespace-only value should be treated as empty (`.trim()` in `envFrom`).
+   - **RESOLVED:** fail closed, panel stays registered. `parseHash`/`verifyPassword` reject a malformed hash with `false` (plan 01-01 Task 2); routes stay registered for a non-empty value and a whitespace-only value counts as empty via `.trim()` in `envFrom` (plan 01-02); the startup notice logs the "not a valid hash" warning without printing the hash (plan 01-04: `adminPanelNotice` in Task 2, logged at startup in Task 3).
 3. **Phase 2 JS 401 handling:** out of scope here, but the 401/403 split chosen in Pattern 3 is the contract Phase 2 will rely on.
+   - **RESOLVED (out of scope for Phase 1):** Phase 2 owns the client-side 401 handling. Phase 1 only fixes the contract it relies on: a missing or expired session answers 401 and a CSRF failure answers 403 `{ error: 'invalid csrf token' }` (plan 01-04).
 
 ## Environment Availability
 
