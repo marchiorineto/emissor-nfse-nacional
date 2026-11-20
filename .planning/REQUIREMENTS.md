@@ -28,7 +28,7 @@ Requirements for milestone v1.0 (Painel administrativo). Each maps to roadmap ph
 - [ ] **PANEL-01**: Admin sees the notas on `/admin`, newest first, with date, client, value, DPS/NFS-e number and status, loaded from `GET /v1/notas`
 - [ ] **PANEL-02**: Admin can filter the list by status and load the next page
 - [ ] **PANEL-03**: Admin can open a nota and see all its details, including the government's errors when it was rejected
-- [ ] **PANEL-04**: Admin can download the PDF and the XML of an issued nota
+- [ ] **PANEL-04**: Admin can download the PDF of an issued nota (XML dropped from the panel on 2026-11-20; it stays available through the API)
 
 ### Nota actions
 

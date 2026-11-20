@@ -61,7 +61,7 @@ Plans:
   1. `/admin` lists the notas newest first, each with date, client, value, DPS/NFS-e number and status, loaded from `GET /v1/notas` through the session cookie, with `API_TOKEN` never reaching the browser.
   2. The admin can filter the list by status and load the next page, and the filter stays applied while more notas load.
   3. The admin can open a nota and see all its details, including the government's errors when it was rejected.
-  4. For an issued nota, the admin can download the PDF and the XML from the panel.
+  4. For an issued nota, the admin can download the PDF from the panel.
 **Plans**: TBD
 **UI hint**: yes
 
