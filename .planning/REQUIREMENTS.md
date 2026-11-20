@@ -62,12 +62,29 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
+| PASS-01 | Phase 1 | Pending |
+| PASS-02 | Phase 1 | Pending |
+| PASS-03 | Phase 1 | Pending |
+| PASS-04 | Phase 1 | Pending |
+| AUTH-01 | Phase 1 | Pending |
+| AUTH-02 | Phase 1 | Pending |
+| AUTH-03 | Phase 1 | Pending |
+| AUTH-04 | Phase 1 | Pending |
+| AUTH-05 | Phase 1 | Pending |
+| AUTH-06 | Phase 1 | Pending |
+| PANEL-01 | Phase 2 | Pending |
+| PANEL-02 | Phase 2 | Pending |
+| PANEL-03 | Phase 2 | Pending |
+| PANEL-04 | Phase 2 | Pending |
+| ACT-01 | Phase 3 | Pending |
+| ACT-02 | Phase 3 | Pending |
+| ACT-03 | Phase 3 | Pending |
 
 **Coverage:**
 - v1 requirements: 17 total
-- Mapped to phases: 0
-- Unmapped: 17 ⚠️
+- Mapped to phases: 17
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-11-20*
-*Last updated: 2026-11-20 after initial definition*
+*Last updated: 2026-11-20 after roadmap creation*
