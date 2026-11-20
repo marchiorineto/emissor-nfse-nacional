@@ -267,6 +267,14 @@ describe('panel security headers', () => {
     expectHeaders(await logout(app, { cookie }, csrf))
   })
 
+  it('pins Pico 2.1.1 classless with an SRI hash and keeps the page CSP', () => {
+    expect(PICO_CSS_URL).toBe('https://cdn.jsdelivr.net/npm/@picocss/pico@2.1.1/css/pico.classless.min.css')
+    expect(PICO_CSS_INTEGRITY).toMatch(/^sha384-[A-Za-z0-9+/]{64}$/)
+    expect(PAGE_CSP).toBe(
+      "default-src 'none'; style-src https://cdn.jsdelivr.net; img-src 'self' data:; script-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+    )
+  })
+
   it('allows only Pico from jsDelivr: no script tag and one absolute URL in src or href', async () => {
     expect(PAGE_CSP).toContain("frame-ancestors 'none'")
     const app = setup()

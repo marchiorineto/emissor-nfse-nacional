@@ -17,9 +17,13 @@ import {
   timingSafeEqual,
 } from './session.ts'
 
-/** Pico.css, pinned to an exact version and loaded with its Subresource Integrity hash (nothing is vendored). */
-export const PICO_CSS_URL = 'https://cdn.jsdelivr.net/npm/@picocss/pico@2.1.1/css/pico.min.css'
-export const PICO_CSS_INTEGRITY = 'sha384-L1dWfspMTHU/ApYnFiMz2QID/PlP1xCW9visvBdbEkOLkSSWsP6ZJWhPw6apiXxU'
+/**
+ * Pico.css 2.1.1, classless build: it styles semantic elements and centers body > header, main and footer with side
+ * gutters, so panel markup needs no class attributes (D-12). Pinned to an exact version and loaded with its Subresource
+ * Integrity hash; nothing is vendored.
+ */
+export const PICO_CSS_URL = 'https://cdn.jsdelivr.net/npm/@picocss/pico@2.1.1/css/pico.classless.min.css'
+export const PICO_CSS_INTEGRITY = 'sha384-NZhm4G1I7BpEGdjDKnzEfy3d78xvy7ECKUwwnKTYi036z42IyF056PbHfpQLIYgL'
 
 /**
  * The Content-Security-Policy of every panel page: styles only from jsDelivr (Pico), scripts only from this origin (room
