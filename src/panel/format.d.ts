@@ -35,3 +35,5 @@ export function listQuery(options?: { status?: string; last?: Pick<NotaView, 'cr
 export function parseStatus(search: string): NotaStatus | ''
 /** The query string for a status filter: '' for Todas, otherwise '?status=<status>'. */
 export function statusSearch(status: string): string
+/** Whether a page of this many notas may be followed by another: true only for a full page. */
+export function hasMore(count: number): boolean

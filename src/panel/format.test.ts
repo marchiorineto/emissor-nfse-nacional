@@ -6,13 +6,16 @@ import {
   formatBrl,
   formatCompetence,
   formatTaxId,
+  hasMore,
   isAlertStatus,
   listDate,
   listQuery,
   numberCell,
   PAGE_SIZE,
+  parseStatus,
   STATUS_ORDER,
   statusLabel,
+  statusSearch,
   takerCell,
 } from './format.js'
 import type { NotaView } from './format.d.ts'
@@ -149,5 +152,43 @@ describe('listQuery', () => {
     expect(listQuery({ status: '', last: { createdAt: '2026-11-20T12:00:00.000Z', id: 'a b&c' } })).toBe(
       '/v1/notas?limit=20&before=2026-11-20T12%3A00%3A00.000Z&beforeId=a+b%26c',
     )
+  })
+})
+
+describe('listQuery with a status and a cursor', () => {
+  it('puts limit, status and the cursor together in that order', () => {
+    expect(listQuery({ status: 'issued', last: { createdAt: '2026-11-20T12:00:00.000Z', id: 'n-21' } })).toBe(
+      '/v1/notas?limit=20&status=issued&before=2026-11-20T12%3A00%3A00.000Z&beforeId=n-21',
+    )
+  })
+})
+
+describe('parseStatus', () => {
+  it('reads a known status from the query string', () => {
+    expect(parseStatus('?status=rejected')).toBe('rejected')
+    expect(parseStatus('?status=issued&status=rejected')).toBe('issued')
+  })
+
+  it('treats no status, an unknown one and a malformed one as Todas without throwing', () => {
+    expect(parseStatus('')).toBe('')
+    expect(parseStatus('?status=bogus')).toBe('')
+    expect(parseStatus('?status=')).toBe('')
+    expect(parseStatus('?status=%E0%A4%A')).toBe('')
+    expect(parseStatus('?other=issued')).toBe('')
+  })
+})
+
+describe('statusSearch', () => {
+  it('is empty for Todas and a status query otherwise', () => {
+    expect(statusSearch('')).toBe('')
+    expect(statusSearch('canceled')).toBe('?status=canceled')
+  })
+})
+
+describe('hasMore', () => {
+  it('is true only for a full page', () => {
+    expect(hasMore(20)).toBe(true)
+    expect(hasMore(19)).toBe(false)
+    expect(hasMore(0)).toBe(false)
   })
 })
