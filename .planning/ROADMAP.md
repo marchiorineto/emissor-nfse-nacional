@@ -36,7 +36,13 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. With a password set, the admin opens `/login`, enters it and lands on `/admin`; a wrong password shows an error that says nothing more than that it failed, and repeated failures from the same address are slowed down.
   4. A successful login sets an HttpOnly, SameSite=Strict session cookie (Secure over HTTPS) that expires after 12 hours; with it the browser can call the `/v1` routes, POST calls also need a CSRF token, and external systems' Bearer calls behave unchanged.
   5. The admin can log out, which ends the session, and visiting `/admin` without a valid session redirects to `/login`; running `pnpm run admin-password` again replaces the hash and every earlier session stops working.
-**Plans**: TBD
+**Plans:** 4 plans
+
+Plans:
+- [ ] 01-01-PLAN.md — Password module (`src/password.ts`) and `pnpm run admin-password` script writing a scrypt hash to `.env` (wave 1)
+- [ ] 01-02-PLAN.md — Login, signed session cookie, `/admin` skeleton, logout, 404 when disabled (wave 2)
+- [ ] 01-03-PLAN.md — Login hardening: per-IP 429 backoff, cross-site check, body limit, page security headers (wave 3)
+- [ ] 01-04-PLAN.md — `/v1` and `/health` through the session cookie with CSRF, Bearer priority, startup notice, README (wave 3)
 **UI hint**: yes
 
 ### Phase 2: Notas Panel
