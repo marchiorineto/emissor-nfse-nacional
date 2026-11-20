@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { createApp } from './app.ts'
 import { envFrom } from './env.ts'
-import type { Gov, GovResult } from './notas.ts'
+import type { Gov, GovResult, Nota, Repo } from './notas.ts'
 import { createMemoryRepo } from './repo.ts'
 
 const TOKEN = 'secret-token'
@@ -24,8 +24,8 @@ const gov: Gov = {
   get: async (_host, path) => (path.includes('/convenio') ? ok(200, { aderente: 1 }) : ok(404, {})),
 }
 
-const setup = (overrides: Partial<typeof env> = {}) =>
-  createApp({ env: { ...env, ...overrides }, repo: createMemoryRepo(), gov, certificate: () => ({ error: 'no certificate: add it with `pnpm run certificate <file.pfx>`' }) })
+const setup = (overrides: Partial<typeof env> = {}, repo: Repo = createMemoryRepo()) =>
+  createApp({ env: { ...env, ...overrides }, repo, gov, certificate: () => ({ error: 'no certificate: add it with `pnpm run certificate <file.pfx>`' }) })
 
 const auth = { authorization: `Bearer ${TOKEN}` }
 const issue = (app: ReturnType<typeof setup>, id = 'pedido-1') =>
@@ -83,3 +83,34 @@ describe('app', () => {
     })
   })
 })
+
+describe('GET /v1/notas limit', () => {
+  const COUNT = 101
+  const listed = async (app: ReturnType<typeof setup>, query: string): Promise<number> => {
+    const res = await app.request(`http://api.test/v1/notas${query}`, { headers: auth })
+    expect(res.status).toBe(200)
+    return ((await res.json()) as { notas: unknown[] }).notas.length
+  }
+  const seeded = async () => {
+    const repo = createMemoryRepo()
+    for (let i = 0; i < COUNT; i++) {
+      const createdAt = new Date(Date.UTC(2026, 10, 20, 12, 0, i)).toISOString()
+      const nota: Nota = { id: `n${i}`, status: 'issued', request: { id: `n${i}`, serviceCode: '080201', description: 'Aula', valueCents: 100 }, dpsNumber: i + 1, dpsId: `DPS${i}`, createdAt, updatedAt: createdAt }
+      await repo.save(nota)
+    }
+    return setup({}, repo)
+  }
+
+  it('uses 50 when absent, empty, zero, negative or not a number (limit=-1 no longer returns the whole table)', async () => {
+    const app = await seeded()
+    for (const query of ['', '?limit=', '?limit=-1', '?limit=0', '?limit=abc', '?limit=0.5']) expect(await listed(app, query), query).toBe(50)
+  })
+
+  it('takes the integer part, caps at 100 and keeps valid values', async () => {
+    const app = await seeded()
+    expect(await listed(app, '?limit=2.9')).toBe(2)
+    expect(await listed(app, '?limit=1000')).toBe(100)
+    expect(await listed(app, '?limit=20')).toBe(20)
+  })
+})
+

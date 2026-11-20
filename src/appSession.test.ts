@@ -1,9 +1,9 @@
 import { afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { adminPanelNotice, createApp } from './app.ts'
 import { envFrom } from './env.ts'
-import type { Gov, GovResult } from './notas.ts'
+import type { Gov, GovResult, Nota, Repo } from './notas.ts'
 import { hashPassword } from './password.ts'
-import { createMemoryRepo } from './repo.ts'
+import { createMemoryRepo, createSqliteRepo, openDatabase } from './repo.ts'
 import { issueSession, sessionKey } from './session.ts'
 
 const TOKEN = 'secret-token'
@@ -33,11 +33,11 @@ beforeAll(async () => {
 
 const clock = { ms: Date.UTC(2026, 10, 20, 12) }
 
-const setup = (overrides: Partial<typeof env> = {}) =>
+const setup = (overrides: Partial<typeof env> = {}, repo: Repo = createMemoryRepo(), govStub: Gov = gov) =>
   createApp({
     env: { ...env, ADMIN_PASSWORD: HASH, ...overrides },
-    repo: createMemoryRepo(),
-    gov,
+    repo,
+    gov: govStub,
     certificate: () => ({ error: 'no certificate' }),
     now: () => clock.ms,
   })
@@ -125,6 +125,158 @@ describe('/v1 through the session cookie', () => {
     const health = await app.request('http://api.test/health', { headers: { cookie } })
     expect(health.status).not.toBe(401)
     expect(await health.json()).toHaveProperty('ok')
+  })
+})
+
+const savedNota = (id: string, createdAt: string, status: Nota['status'] = 'issued'): Nota => ({
+  id,
+  status,
+  request: { id, serviceCode: '080201', description: 'Aula', valueCents: 100 },
+  dpsNumber: 1,
+  dpsId: `DPS${id}`,
+  createdAt,
+  updatedAt: createdAt,
+})
+
+describe('notas list pages through the session cookie', () => {
+  const T1 = '2026-11-20T12:00:01.000Z'
+  const T0 = '2026-11-20T12:00:00.000Z'
+
+  const page = async (app: App, cookie: string, query: Record<string, string>): Promise<string[]> => {
+    const res = await app.request(`http://api.test/v1/notas?${new URLSearchParams(query)}`, { headers: { cookie } })
+    expect(res.status).toBe(200)
+    return ((await res.json()) as { notas: Array<{ id: string }> }).notas.map((n) => n.id)
+  }
+
+  const seeded = async () => {
+    const repo = createSqliteRepo(openDatabase(':memory:'))
+    await repo.save(savedNota('a', T1))
+    await repo.save(savedNota('b', T0))
+    await repo.save(savedNota('c', T0))
+    const app = setup({}, repo)
+    return { repo, app, cookie: await loginCookie(app, '198.51.100.20') }
+  }
+
+  it('returns every nota exactly once across pages, even when two share a createdAt at the page edge', async () => {
+    const { app, cookie } = await seeded()
+    expect(await page(app, cookie, { limit: '2' })).toEqual(['a', 'c'])
+    expect(await page(app, cookie, { limit: '2', before: T0, beforeId: 'c' })).toEqual(['b'])
+  })
+
+  it('keeps the old meaning of before alone', async () => {
+    const { app, cookie } = await seeded()
+    expect(await page(app, cookie, { before: T0 })).toEqual([])
+    expect(await page(app, cookie, { before: T1 })).toEqual(['c', 'b'])
+  })
+
+  it('ignores beforeId without before', async () => {
+    const { app, cookie } = await seeded()
+    expect(await page(app, cookie, { beforeId: 'c' })).toEqual(['a', 'c', 'b'])
+  })
+
+  it('keeps the status filter on every page', async () => {
+    const { repo, app, cookie } = await seeded()
+    await repo.save(savedNota('r', T0, 'rejected'))
+    expect(await page(app, cookie, { status: 'issued', limit: '2' })).toEqual(['a', 'c'])
+    expect(await page(app, cookie, { status: 'issued', limit: '2', before: T0, beforeId: 'c' })).toEqual(['b'])
+  })
+
+  it('treats a hostile beforeId as data', async () => {
+    const { app, cookie } = await seeded()
+    expect(await page(app, cookie, { before: T0, beforeId: "x'; DROP TABLE notas; --" })).toEqual(['c', 'b'])
+    expect(await page(app, cookie, {})).toEqual(['a', 'c', 'b'])
+  })
+})
+
+describe('PDF download for the panel', () => {
+  const PDF = Buffer.from('%PDF-1.4')
+  const pdfGov: Gov = { ...gov, get: async (_host, path) => (path.startsWith('/danfse/') ? ok(200, { pdfB64: PDF.toString('base64') }) : gov.get(_host, path)) }
+  const pdfUrl = (id: string, query = '') => `http://api.test/v1/notas/${encodeURIComponent(id)}/pdf${query}`
+  const INLINE = 'inline; filename="nfse-pedido-1.pdf"'
+  const ATTACHMENT = 'attachment; filename="nfse-7.pdf"'
+
+  const issued = async () => {
+    const repo = createMemoryRepo()
+    const app = setup({}, repo, pdfGov)
+    expect((await issue(app, bearer)).status).toBe(200)
+    return { repo, app, cookie: await loginCookie(app, '198.51.100.30') }
+  }
+
+  it('keeps the inline answer for Bearer clients byte for byte', async () => {
+    const { app } = await issued()
+    const res = await app.request(pdfUrl('pedido-1'), { headers: bearer })
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toBe('application/pdf')
+    expect(res.headers.get('content-disposition')).toBe(INLINE)
+    expect(Buffer.from(await res.arrayBuffer())).toEqual(PDF)
+  })
+
+  it('answers the same bytes as an attachment named by the NFS-e number with download=1', async () => {
+    const { app, cookie } = await issued()
+    const inline = Buffer.from(await (await app.request(pdfUrl('pedido-1'), { headers: bearer })).arrayBuffer())
+    for (const headers of [bearer, { cookie }]) {
+      const res = await app.request(pdfUrl('pedido-1', '?download=1'), { headers })
+      expect(res.status).toBe(200)
+      expect(res.headers.get('content-type')).toBe('application/pdf')
+      expect(res.headers.get('content-disposition')).toBe(ATTACHMENT)
+      expect(Buffer.from(await res.arrayBuffer())).toEqual(inline)
+    }
+  })
+
+  it('answers 401 with no credential', async () => {
+    const { app } = await issued()
+    const res = await app.request(pdfUrl('pedido-1', '?download=1'))
+    expect(res.status).toBe(401)
+    expect(await res.json()).toEqual(UNAUTHORIZED)
+  })
+
+  it('stays inline for any download value other than 1', async () => {
+    const { app, cookie } = await issued()
+    for (const value of ['0', 'true', '']) {
+      const res = await app.request(pdfUrl('pedido-1', `?download=${value}`), { headers: { cookie } })
+      expect(res.status).toBe(200)
+      expect(res.headers.get('content-disposition'), value).toBe(INLINE)
+    }
+  })
+
+  it('answers 404 for a nota without an access key, with and without download=1', async () => {
+    const { repo, app, cookie } = await issued()
+    await repo.save(savedNota('pendente', '2026-11-20T12:00:00.000Z', 'pending'))
+    for (const query of ['', '?download=1']) {
+      const res = await app.request(pdfUrl('pendente', query), { headers: { cookie } })
+      expect(res.status, query).toBe(404)
+      expect(await res.json()).toEqual({ error: 'nota not issued' })
+    }
+  })
+
+  it('downloads an issued nota whose id is outside Latin-1', async () => {
+    const app = setup({}, createMemoryRepo(), pdfGov)
+    const id = 'pedido-ç😀'
+    const created = await app.request('http://api.test/v1/notas', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...bearer },
+      body: JSON.stringify({ id, serviceCode: '080201', description: 'Aula', valueCents: 100 }),
+    })
+    expect(created.status).toBe(200)
+    const res = await app.request(pdfUrl(id, '?download=1'), { headers: bearer })
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-disposition')).toBe(ATTACHMENT)
+  })
+
+  it('is read-only: two parallel downloads answer the same and leave the nota untouched', async () => {
+    const { repo, app, cookie } = await issued()
+    const before = await repo.get('pedido-1')
+    const [one, two] = await Promise.all([1, 2].map(() => app.request(pdfUrl('pedido-1', '?download=1'), { headers: { cookie } })))
+    expect([one?.status, two?.status]).toEqual([200, 200])
+    expect(one?.headers.get('content-disposition')).toBe(two?.headers.get('content-disposition'))
+    const after = await repo.get('pedido-1')
+    expect(after?.status).toBe(before?.status)
+    expect(after?.updatedAt).toBe(before?.updatedAt)
+  })
+
+  it('has no XML route under /v1/notas/:id', async () => {
+    const { app, cookie } = await issued()
+    expect((await app.request('http://api.test/v1/notas/pedido-1/xml', { headers: { cookie } })).status).toBe(404)
   })
 })
 

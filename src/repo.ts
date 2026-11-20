@@ -63,17 +63,21 @@ export const createSqliteRepo = (db: DatabaseSync): Repo => {
       if (!row) throw new Error('could not reserve a DPS number')
       return Number(row.value)
     },
-    list: async ({ status, limit, before }) => {
-      const filters = [status ? 'status = ?' : '', before ? 'created_at < ?' : ''].filter(Boolean)
+    list: async ({ status, limit, before, beforeId }) => {
+      const cursor = before && beforeId ? '(created_at, id) < (?, ?)' : before ? 'created_at < ?' : ''
+      const filters = [status ? 'status = ?' : '', cursor].filter(Boolean)
       const where = filters.length ? `WHERE ${filters.join(' AND ')}` : ''
-      const params = [status, before].filter((value): value is string => Boolean(value))
-      const rows = db.prepare(`SELECT data FROM notas ${where} ORDER BY created_at DESC LIMIT ?`).all(...params, limit)
+      const params = [status, before, before ? beforeId : undefined].filter((value): value is string => Boolean(value))
+      const rows = db.prepare(`SELECT data FROM notas ${where} ORDER BY created_at DESC, id DESC LIMIT ?`).all(...params, limit)
       return rows.map((row) => JSON.parse(String(row.data)) as Nota)
     },
   }
 }
 
-/** In-memory Repo for tests. */
+/**
+ * In-memory Repo for tests. Its list mirrors the SQLite ordering (createdAt then id, descending; ids compared by UTF-8
+ * bytes like SQLite's BINARY collation) and the before/beforeId cursor, so route tests of paging are meaningful.
+ */
 export const createMemoryRepo = (): Repo & { notas: Map<string, Nota>; setCounter(value: number): void } => {
   const notas = new Map<string, Nota>()
   let counter = 0
@@ -87,6 +91,18 @@ export const createMemoryRepo = (): Repo & { notas: Map<string, Nota>; setCounte
       notas.set(nota.id, structuredClone(nota))
     },
     nextNumber: async () => ++counter,
-    list: async ({ status, limit }) => [...notas.values()].filter((nota) => !status || nota.status === status).slice(0, limit),
+    list: async ({ status, limit, before, beforeId }) => {
+      const byId = (a: Nota, b: Nota) => Buffer.compare(Buffer.from(a.id), Buffer.from(b.id))
+      const isOlder = (nota: Nota) => {
+        if (!before) return true
+        if (!beforeId) return nota.createdAt < before
+        return nota.createdAt < before || (nota.createdAt === before && Buffer.compare(Buffer.from(nota.id), Buffer.from(beforeId)) < 0)
+      }
+      return [...notas.values()]
+        .filter((nota) => (!status || nota.status === status) && isOlder(nota))
+        .sort((a, b) => (a.createdAt === b.createdAt ? byId(b, a) : a.createdAt < b.createdAt ? 1 : -1))
+        .slice(0, limit)
+        .map((nota) => structuredClone(nota))
+    },
   }
 }

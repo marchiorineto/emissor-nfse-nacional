@@ -3,8 +3,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { describe, expect, it } from 'vitest'
-import type { Nota } from './notas.ts'
-import { createSqliteRepo, openDatabase } from './repo.ts'
+import type { Nota, Repo } from './notas.ts'
+import { createMemoryRepo, createSqliteRepo, openDatabase } from './repo.ts'
 
 const MIGRATIONS = join(import.meta.dirname, '..', 'migrations')
 
@@ -61,5 +61,59 @@ describe('sqlite repo', () => {
     exported.exec("INSERT INTO counters (name, value) VALUES ('dps', 41)")
     exported.close()
     expect(await createSqliteRepo(openDatabase(path)).nextNumber()).toBe(42)
+  })
+})
+
+describe.each<[string, () => Repo]>([
+  ['sqlite repo', () => createSqliteRepo(openDatabase(':memory:'))],
+  ['memory repo', () => createMemoryRepo()],
+])('%s list', (_name, makeRepo) => {
+  const T = '2026-11-20T12:00:00.000Z'
+  const ids = async (repo: Repo, options: Parameters<Repo['list']>[0]) => (await repo.list(options)).map((n) => n.id)
+
+  it('lists the newest first, by status and before a date', async () => {
+    const repo = makeRepo()
+    await repo.save(nota('old', '2026-11-01T00:00:00Z'))
+    await repo.save(nota('mid', '2026-11-02T00:00:00Z', 'rejected'))
+    await repo.save(nota('new', '2026-11-03T00:00:00Z'))
+    expect(await ids(repo, { limit: 10 })).toEqual(['new', 'mid', 'old'])
+    expect(await ids(repo, { status: 'issued', limit: 10 })).toEqual(['new', 'old'])
+    expect(await ids(repo, { limit: 10, before: '2026-11-03T00:00:00Z' })).toEqual(['mid', 'old'])
+    expect(await ids(repo, { limit: 1 })).toEqual(['new'])
+  })
+
+  it('orders notas sharing a createdAt by id descending, identically on repeated calls', async () => {
+    const repo = makeRepo()
+    for (const id of ['b', 'a', 'c']) await repo.save(nota(id, T))
+    expect(await ids(repo, { limit: 10 })).toEqual(['c', 'b', 'a'])
+    expect(await ids(repo, { limit: 10 })).toEqual(['c', 'b', 'a'])
+  })
+
+  it('pages through a tie with before and beforeId without skipping or repeating', async () => {
+    const repo = makeRepo()
+    for (const id of ['a', 'b', 'c']) await repo.save(nota(id, T))
+    expect(await ids(repo, { limit: 2 })).toEqual(['c', 'b'])
+    expect(await ids(repo, { limit: 2, before: T, beforeId: 'b' })).toEqual(['a'])
+  })
+
+  it('ignores beforeId without before', async () => {
+    const repo = makeRepo()
+    for (const id of ['a', 'b', 'c']) await repo.save(nota(id, T))
+    expect(await ids(repo, { limit: 10, beforeId: 'b' })).toEqual(['c', 'b', 'a'])
+  })
+
+  it('orders ids by UTF-8 bytes, like SQLite BINARY collation', async () => {
+    const repo = makeRepo()
+    for (const id of ['Z', 'a', 'é', 'z']) await repo.save(nota(id, T))
+    expect(await ids(repo, { limit: 10 })).toEqual(['é', 'z', 'a', 'Z'])
+  })
+
+  it('returns copies, not the stored notas', async () => {
+    const repo = makeRepo()
+    await repo.save(nota('a', T))
+    const [listed] = await repo.list({ limit: 10 })
+    if (listed) listed.status = 'rejected'
+    expect((await repo.get('a'))?.status).toBe('issued')
+    expect((await repo.list({ limit: 10 }))[0]?.status).toBe('issued')
   })
 })

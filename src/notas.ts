@@ -69,7 +69,12 @@ export interface Repo {
   save(nota: Nota): Promise<void>
   /** Next DPS number of the series; never repeats. */
   nextNumber(): Promise<number>
-  list(options: { status?: NotaStatus; limit: number; before?: string }): Promise<Nota[]>
+  /**
+   * Newest first by createdAt, then by id descending. With `before`, only older notas; with `before` and `beforeId`,
+   * only notas strictly after the pair (before, beforeId) in that order, which is what the panel's next page sends
+   * (D-02). `beforeId` alone is ignored.
+   */
+  list(options: { status?: NotaStatus; limit: number; before?: string; beforeId?: string }): Promise<Nota[]>
 }
 
 /** Answer from the container; `reached: false` when the government was not reached or did not answer. */
@@ -92,7 +97,7 @@ export interface Notas {
   get(id: string): Promise<Nota | null>
   cancel(id: string, reason: { code?: '1' | '2' | '9'; text?: string }): Promise<Nota>
   pdf(id: string): Promise<Uint8Array | null>
-  list(options: { status?: NotaStatus; limit: number; before?: string }): Promise<Nota[]>
+  list(options: { status?: NotaStatus; limit: number; before?: string; beforeId?: string }): Promise<Nota[]>
 }
 
 export const notaError = (status: number, message: string): Error & { status: number } => Object.assign(new Error(message), { status })
