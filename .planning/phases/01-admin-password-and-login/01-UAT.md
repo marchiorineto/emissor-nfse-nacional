@@ -1,5 +1,5 @@
 ---
-status: diagnosed
+status: testing
 phase: 01-admin-password-and-login
 source: [01-VERIFICATION.md]
 started: 2026-11-20T20:35:00Z
@@ -7,8 +7,13 @@ updated: 2026-11-20T21:15:17.000Z
 ---
 
 ## Current Test
+<!-- OVERWRITE each test - shows where we are -->
 
-[testing complete]
+number: 4
+name: Re-run UAT test 3 in a real browser after gap fix G-01-3
+expected: |
+  With ADMIN_PASSWORD set and `pnpm start`, at http://localhost:8080/login (light and dark OS scheme, desktop and a narrow window): content is centered with side gutters, not flush to the edges; a wrong password gives the field a red border with 'Senha incorreta.' in red under it; /admin has a nav header with a compact 'Sair' button on the right; the Produção and Homologação badges look different; the console shows no SRI or CSP error; the Network tab shows requests only to the app origin and cdn.jsdelivr.net; the page no longer looks 'ugly'
+awaiting: user response
 
 ## Tests
 
@@ -43,10 +48,12 @@ blocked: 0
 
 - gap_id: G-01-3
   truth: "`/login` and `/admin` render styled with Pico; the console shows no SRI or CSP errors; the Network tab shows requests only to the app's own origin and cdn.jsdelivr.net."
-  status: failed
+  status: resolved
   reason: "User reported: styled but ugly, no console errors"
   severity: cosmetic
   test: 3
+  resolved_by: 01-05-PLAN.md
+  resolved_at: 2026-11-20
   root_cause: "Pages load the class-based pico.min.css without a .container, so body>header/main get no horizontal gutters or max-width (content flush to viewport edges, 1440 px-wide inputs on desktop); the logout submit button inherits Pico's width:100% and dominates the /admin header; production and homologação badges share the same <mark> style; the login error is unstyled (no aria-invalid/<small>); 403/413/CSRF refusals are bare text/plain pages. All documented in 01-UI-REVIEW.md (Spacing 2/4, Visuals 2/4) and not yet fixed."
   artifacts:
     - path: "src/admin.ts"
