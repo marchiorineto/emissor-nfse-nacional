@@ -1,5 +1,6 @@
-import { createHmac, timingSafeEqual as bytesEqual } from 'node:crypto'
+import { createHmac } from 'node:crypto'
 import { Hono, type MiddlewareHandler } from 'hono'
+import { registerAdmin } from './admin.ts'
 import { configFrom, configProblems } from './config.ts'
 import { hosts, type Environment } from './dps.ts'
 import { publicLookupUrl } from './danfse.ts'
@@ -7,25 +8,22 @@ import type { Env } from './env.ts'
 import type { Certificate } from './gov.ts'
 import { createNotas, isNotaError, type Gov, type Nota, type NotaStatus, type Repo } from './notas.ts'
 import { parseIssueRequest } from './request.ts'
+import { sessionKey, timingSafeEqual } from './session.ts'
 
 export interface AppDeps {
   env: Env
   repo: Repo
   gov: Gov
   certificate: () => Certificate | { error: string }
+  /** Clock in milliseconds; tests inject it. Defaults to Date.now. */
+  now?: () => number
 }
 
 const NOTA_STATUSES: readonly NotaStatus[] = ['pending', 'unknown', 'issued', 'rejected', 'canceled', 'replaced']
 const MAX_LIST = 100
 const STATUS_CODE: Record<NotaStatus, 200 | 202 | 422> = { issued: 200, canceled: 200, replaced: 200, rejected: 422, pending: 202, unknown: 202 }
 
-const timingSafeEqual = (a: string, b: string): boolean => {
-  const left = Buffer.from(a)
-  const right = Buffer.from(b)
-  return left.byteLength === right.byteLength && bytesEqual(left, right)
-}
-
-export const createApp = ({ env, repo, gov, certificate }: AppDeps): Hono => {
+export const createApp = ({ env, repo, gov, certificate, now = Date.now }: AppDeps): Hono => {
   const notas = () => createNotas({ repo, gov, config: configFrom(env) })
 
   /** Signature of the public links of a nota: whoever has the link (the buyer's email) can download it, nobody can guess one. */
@@ -51,6 +49,12 @@ export const createApp = ({ env, repo, gov, certificate }: AppDeps): Hono => {
 
   const app = new Hono()
 
+  /**
+   * The panel is off, and its routes are never registered, when ADMIN_PASSWORD is empty (AUTH-01). The key is derived
+   * once at startup, so a new hash ends every session after a restart (D-01, D-02).
+   */
+  const admin = env.ADMIN_PASSWORD ? { key: sessionKey(env.ADMIN_PASSWORD) } : undefined
+
   const requireToken: MiddlewareHandler = async (c, next) => {
     const token = c.req.header('authorization')?.replace(/^Bearer /, '') ?? ''
     if (!env.API_TOKEN || !timingSafeEqual(token, env.API_TOKEN)) return c.json({ error: 'unauthorized' }, 401)
@@ -60,6 +64,7 @@ export const createApp = ({ env, repo, gov, certificate }: AppDeps): Hono => {
   app.use('/v1/*', requireToken)
   // /health too: with ?deep=1 it calls the government with the certificate.
   app.use('/health', requireToken)
+  if (admin) registerAdmin(app, { env, key: admin.key, now })
 
   /** Checks the settings and the certificate's expiry; `?deep=1` also asks the government. */
   app.get('/health', async (c) => {

@@ -19,6 +19,8 @@ export interface Env {
   PORT: number
   /** Public address of the API (e.g. https://nfse.example.com), for the links; empty uses the request's own. */
   PUBLIC_URL: string
+  /** Salted scrypt hash of the panel password, written by `pnpm run admin-password`; empty turns the panel off. */
+  ADMIN_PASSWORD: string
 }
 
 export const envFrom = (vars: Record<string, string | undefined>): Env => ({
@@ -36,4 +38,5 @@ export const envFrom = (vars: Record<string, string | undefined>): Env => ({
   DATABASE_PATH: vars.DATABASE_PATH || 'data/emissor-nfse.db',
   PORT: Number(vars.PORT) || 8080,
   PUBLIC_URL: (vars.PUBLIC_URL ?? '').replace(/\/+$/, ''),
+  ADMIN_PASSWORD: (vars.ADMIN_PASSWORD ?? '').trim(),
 })
