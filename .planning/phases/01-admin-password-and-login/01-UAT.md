@@ -1,5 +1,5 @@
 ---
-status: diagnosed
+status: testing
 phase: 01-admin-password-and-login
 source: [01-VERIFICATION.md]
 started: 2026-11-20T20:35:00Z
@@ -7,8 +7,13 @@ updated: 2026-11-20T21:17:51.814Z
 ---
 
 ## Current Test
+<!-- OVERWRITE each test - shows where we are -->
 
-[testing complete]
+number: 5
+name: Login card centered after fix G-01-4
+expected: |
+  After pulling fix 62c8cce and restarting `pnpm start`, http://localhost:8080/login on desktop (light and dark) and a narrow window shows one narrow card centered on the screen: 'Emissor de NFS-e' with 'Painel administrativo' under it, a card-width Senha field and Entrar button; a wrong password still turns the field red with 'Senha incorreta.'; the page looks decent
+awaiting: user response
 
 ## Tests
 
@@ -32,12 +37,16 @@ result: issue
 reported: "the /login still looks like shit though. huge field and button"
 severity: cosmetic
 
+### 5. Login card centered after fix G-01-4
+expected: After pulling fix 62c8cce and restarting `pnpm start`, http://localhost:8080/login on desktop (light and dark) and a narrow window shows one narrow card centered on the screen: 'Emissor de NFS-e' with 'Painel administrativo' under it, a card-width Senha field and Entrar button; a wrong password still turns the field red with 'Senha incorreta.'; the page looks decent
+result: [pending]
+
 ## Summary
 
-total: 4
+total: 5
 passed: 2
 issues: 2
-pending: 0
+pending: 1
 skipped: 0
 blocked: 0
 
@@ -86,3 +95,4 @@ blocked: 0
     - "Provide the narrowing rule without inline styles: a small same-origin stylesheet route (style-src 'self' added to PAGE_CSP) or another CSP-safe mechanism"
     - "Keep Pico SRI, CSP and no-class tests green; add a test for the new constraint"
   debug_session: "inline diagnosis during /gsd-verify-work 01 (src/admin.ts, Pico classless docs)"
+  fix_commit: 62c8cce
