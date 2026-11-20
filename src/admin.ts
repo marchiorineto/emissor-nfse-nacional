@@ -17,9 +17,13 @@ import {
   timingSafeEqual,
 } from './session.ts'
 
-/** Pico.css, pinned to an exact version and loaded with its Subresource Integrity hash (nothing is vendored). */
-export const PICO_CSS_URL = 'https://cdn.jsdelivr.net/npm/@picocss/pico@2.1.1/css/pico.min.css'
-export const PICO_CSS_INTEGRITY = 'sha384-L1dWfspMTHU/ApYnFiMz2QID/PlP1xCW9visvBdbEkOLkSSWsP6ZJWhPw6apiXxU'
+/**
+ * Pico.css 2.1.1, classless build: it styles semantic elements and centers body > header, main and footer with side
+ * gutters, so panel markup needs no class attributes (D-12). Pinned to an exact version and loaded with its Subresource
+ * Integrity hash; nothing is vendored.
+ */
+export const PICO_CSS_URL = 'https://cdn.jsdelivr.net/npm/@picocss/pico@2.1.1/css/pico.classless.min.css'
+export const PICO_CSS_INTEGRITY = 'sha384-NZhm4G1I7BpEGdjDKnzEfy3d78xvy7ECKUwwnKTYi036z42IyF056PbHfpQLIYgL'
 
 /**
  * The Content-Security-Policy of every panel page: styles only from jsDelivr (Pico), scripts only from this origin (room
@@ -62,36 +66,71 @@ const layout = (title: string, content: Html, csrf?: string): Html => html`<!doc
   </body>
 </html>`
 
-/** The login form; the password field never carries a value, so it always comes back empty. */
-const loginPage = (error?: string): Html =>
+/**
+ * The login form; the password field never carries a value, so it always comes back empty. With an error the field points
+ * at it through aria-describedby, and `invalid` also marks the field aria-invalid, which Pico paints red together with the
+ * small that follows it (the 429 notice is not about the password, so it leaves `invalid` off).
+ */
+const loginPage = (error?: string, invalid = false): Html =>
   layout(
-    'Entrar - Emissor de NFS-e',
+    'Entrar – Emissor de NFS-e',
     html`<main>
-      <h1>Painel do emissor</h1>
+      <h1>Emissor de NFS-e</h1>
       <form method="post" action="/login">
-        <label>Senha
-          <input type="password" name="password" autocomplete="current-password" required autofocus>
-        </label>
-        ${error ? html`<p role="alert">${error}</p>` : ''}
+        <label for="password">Senha</label>
+        <input type="password" id="password" name="password" autocomplete="current-password" required autofocus${error ? html` aria-describedby="login-error"` : ''}${error && invalid ? html` aria-invalid="true"` : ''}>
+        ${error ? html`<small id="login-error" role="alert">${error}</small>` : ''}
         <button type="submit">Entrar</button>
       </form>
     </main>`,
   )
 
-/** The panel skeleton: issuer, environment badge, logout form and an empty area for the notas list. */
+/** The environment badge: produção is strong on the dark mark, anything else on the light mark, so the two always differ. */
+const environmentBadge = (environment: string): Html =>
+  environment === 'production'
+    ? html`<strong><mark data-theme="dark">${environmentLabel(environment)}</mark></strong>`
+    : html`<mark data-theme="light">${environmentLabel(environment)}</mark>`
+
+/**
+ * The panel skeleton: a nav header with issuer and environment badge on the left and logout on the right, then an empty area
+ * for the notas list. The Sair button has no type attribute on purpose: inside a form it submits anyway, and leaving it off
+ * keeps Pico's full-width and bottom-margin rules for typed submit buttons away, so it takes its content width in the nav.
+ */
 const adminPage = (cnpj: string, environment: string, csrf: string): Html =>
   layout(
     'Emissor de NFS-e',
     html`<header>
-        <h1>Emissor de NFS-e</h1>
-        <p>${cnpj} <mark>${environment}</mark></p>
-        <form method="post" action="/logout">
-          <input type="hidden" name="csrf" value="${csrf}">
-          <button type="submit">Sair</button>
-        </form>
+        <nav>
+          <ul>
+            <li>
+              <hgroup>
+                <h1>Emissor de NFS-e</h1>
+                <p>CNPJ ${cnpj} ${environmentBadge(environment)}</p>
+              </hgroup>
+            </li>
+          </ul>
+          <ul>
+            <li>
+              <form method="post" action="/logout">
+                <input type="hidden" name="csrf" value="${csrf}">
+                <button>Sair</button>
+              </form>
+            </li>
+          </ul>
+        </nav>
       </header>
       <main id="notas"></main>`,
     csrf,
+  )
+
+/** A refused request as a styled page with one link back. Only fixed strings reach it: no request header or body is echoed. */
+const refusalPage = (heading: string, href: '/login' | '/admin', label: string): Html =>
+  layout(
+    `${heading} – Emissor de NFS-e`,
+    html`<main>
+      <h1>${heading}</h1>
+      <p><a href="${href}">${label}</a></p>
+    </main>`,
   )
 
 /**
@@ -141,8 +180,8 @@ export const registerAdmin = (app: Hono, { env, key, now }: AdminDeps): void => 
   app.get('/login', (c) => (sessionOf(getCookie(c, SESSION_COOKIE)) ? c.redirect('/admin', 303) : c.html(loginPage())))
 
   // Order: body limit, cross-site check, throttle, parse, verify. Refused posts run no scrypt and count as no failure.
-  app.post('/login', bodyLimit({ maxSize: 4 * 1024, onError: (c) => c.text('Pedido grande demais.', 413) }), async (c) => {
-    if (!sameOriginLogin(c, env.PUBLIC_URL)) return c.text('Pedido recusado.', 403)
+  app.post('/login', bodyLimit({ maxSize: 4 * 1024, onError: (c) => c.html(refusalPage('Pedido grande demais', '/login', 'Voltar ao login'), 413) }), async (c) => {
+    if (!sameOriginLogin(c, env.PUBLIC_URL)) return c.html(refusalPage('Pedido recusado', '/login', 'Voltar ao login'), 403)
     const ip = clientIp(c)
     const wait = throttle.begin(ip)
     if (wait > 0) {
@@ -154,7 +193,7 @@ export const registerAdmin = (app: Hono, { env, key, now }: AdminDeps): void => 
       const form = await c.req.parseBody().catch(() => ({}) as Record<string, unknown>)
       const password = typeof form.password === 'string' ? form.password : ''
       ok = await verifyPassword(password, env.ADMIN_PASSWORD)
-      if (!ok) return c.html(loginPage('Senha incorreta.'), 401)
+      if (!ok) return c.html(loginPage('Senha incorreta.', true), 401)
     } finally {
       throttle.end(ip, ok)
     }
@@ -186,13 +225,13 @@ export const registerAdmin = (app: Hono, { env, key, now }: AdminDeps): void => 
     if (!session) return clear()
     const form = await c.req.parseBody().catch(() => ({}) as Record<string, unknown>)
     const csrf = typeof form.csrf === 'string' ? form.csrf : ''
-    if (!timingSafeEqual(csrf, csrfToken(key, session.id))) return c.text('Sessão expirada ou formulário inválido. Recarregue a página.', 403)
+    if (!timingSafeEqual(csrf, csrfToken(key, session.id))) return c.html(refusalPage('Sessão expirada ou formulário inválido', '/admin', 'Voltar ao painel'), 403)
     return clear()
   })
 
   app.get('/admin', (c) => {
     const session = sessionOf(getCookie(c, SESSION_COOKIE))
     if (!session) return c.redirect('/login', 303)
-    return c.html(adminPage(formatCnpj(env.ISSUER_CNPJ), environmentLabel(env.NFSE_ENVIRONMENT), csrfToken(key, session.id)))
+    return c.html(adminPage(formatCnpj(env.ISSUER_CNPJ), env.NFSE_ENVIRONMENT, csrfToken(key, session.id)))
   })
 }

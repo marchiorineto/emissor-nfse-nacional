@@ -75,7 +75,53 @@ describe('admin login', () => {
     const body = await res.text()
     expect(body).toContain('Senha incorreta.')
     expect(body).not.toContain('wrong password 12')
+    expect(body).not.toMatch(/<input[^>]*\svalue=/)
     expect(res.headers.get('set-cookie')).toBeNull()
+  })
+
+  it('marks the password field invalid after a wrong password, with the message tied to it', async () => {
+    const body = await (await login(setup(), 'wrong password 12')).text()
+    expect(body).toContain('aria-invalid="true"')
+    expect(body).toContain('aria-describedby="login-error"')
+    expect(body).toContain('<small id="login-error" role="alert">Senha incorreta.</small>')
+  })
+
+  it('shows the login form with one product name, a labelled field and no error state', async () => {
+    const body = await (await setup().request('http://api.test/login')).text()
+    for (const text of ['<h1>Emissor de NFS-e</h1>', 'for="password"', 'id="password"', '<title>Entrar – Emissor de NFS-e</title>']) {
+      expect(body).toContain(text)
+    }
+    expect(body).not.toContain('aria-invalid')
+    expect(body).not.toContain('login-error')
+    expect(body).not.toContain('Painel do emissor')
+  })
+
+  it('renders a nav header on /admin with the labelled CNPJ, the light homologação badge and a compact Sair', async () => {
+    const app = setup()
+    const { cookie } = await session(app)
+    const body = await (await app.request('http://api.test/admin', { headers: { cookie } })).text()
+    for (const text of [
+      '<nav>',
+      '<hgroup>',
+      '<h1>Emissor de NFS-e</h1>',
+      'CNPJ 11.222.333/0001-81',
+      '<mark data-theme="light">Homologação (produção restrita)</mark>',
+      '<button>Sair</button>',
+      'name="csrf" value="',
+      '<meta name="csrf-token" content="',
+    ]) {
+      expect(body).toContain(text)
+    }
+    expect(body.match(/<h1>/g)).toHaveLength(1)
+    expect(body).not.toContain('data-theme="dark"')
+  })
+
+  it('renders produção as a strong dark badge', async () => {
+    const app = setup({ NFSE_ENVIRONMENT: 'production' })
+    const { cookie } = await session(app)
+    const body = await (await app.request('http://api.test/admin', { headers: { cookie } })).text()
+    expect(body).toContain('<strong><mark data-theme="dark">Produção</mark></strong>')
+    expect(body).not.toContain('data-theme="light"')
   })
 })
 
@@ -150,6 +196,11 @@ describe('admin guard and logout', () => {
     const { cookie } = await session(app)
     const res = await logout(app, { cookie }, 'wrong')
     expect(res.status).toBe(403)
+    expect(res.headers.get('content-type')).toContain('text/html')
+    const body = await res.text()
+    expect(body).toContain('<h1>Sessão expirada ou formulário inválido</h1>')
+    expect(body).toContain('href="/admin"')
+    expect(body).toContain('Voltar ao painel')
     expect(res.headers.get('set-cookie')).toBeNull()
   })
 
@@ -178,7 +229,11 @@ describe('login throttle', () => {
     const blocked = await login(app, PASSWORD, { 'x-forwarded-for': '198.51.100.1' })
     expect(blocked.status).toBe(429)
     expect(blocked.headers.get('retry-after')).toBe('1')
-    expect(await blocked.text()).toContain('Muitas tentativas')
+    const blockedBody = await blocked.text()
+    expect(blockedBody).toContain('Muitas tentativas')
+    expect(blockedBody).toContain('aria-describedby="login-error"')
+    expect(blockedBody).toContain('<small id="login-error" role="alert">Muitas tentativas. Tente de novo em 1 s.</small>')
+    expect(blockedBody).not.toContain('aria-invalid')
     expect(blocked.headers.get('set-cookie')).toBeNull()
     expect((await login(app, PASSWORD, { 'x-forwarded-for': '198.51.100.2' })).status).toBe(303)
     clock.ms += 1000
@@ -208,7 +263,11 @@ describe('cross-site login refusal', () => {
     for (const site of ['cross-site', 'same-site']) {
       const res = await rawLogin(app, 'wrong password 12', { 'sec-fetch-site': site })
       expect(res.status).toBe(403)
-      expect(await res.text()).toBe('Pedido recusado.')
+      expect(res.headers.get('content-type')).toContain('text/html')
+      const body = await res.text()
+      expect(body).toContain('<h1>Pedido recusado</h1>')
+      expect(body).toContain('href="/login"')
+      expect(body).toContain('Voltar ao login')
     }
     clock.ms += 10_000
     for (const site of ['same-origin', 'none']) {
@@ -243,7 +302,10 @@ describe('login body limit', () => {
     const app = setup()
     const big = await rawLogin(app, '', { 'sec-fetch-site': 'same-origin' }, `password=${'a'.repeat(4991)}`)
     expect(big.status).toBe(413)
-    expect(await big.text()).toBe('Pedido grande demais.')
+    expect(big.headers.get('content-type')).toContain('text/html')
+    const body = await big.text()
+    expect(body).toContain('<h1>Pedido grande demais</h1>')
+    expect(body).toContain('href="/login"')
     expect((await rawLogin(app, PASSWORD, { 'sec-fetch-site': 'same-origin' })).status).toBe(303)
   })
 })
@@ -267,13 +329,44 @@ describe('panel security headers', () => {
     expectHeaders(await logout(app, { cookie }, csrf))
   })
 
-  it('allows only Pico from jsDelivr: no script tag and one absolute URL in src or href', async () => {
+  it('sends them on a cross-site refusal, an oversized login and a logout with a bad CSRF token', async () => {
+    const app = setup()
+    expectHeaders(await rawLogin(app, PASSWORD, { 'sec-fetch-site': 'cross-site' }))
+    expectHeaders(await rawLogin(app, '', { 'sec-fetch-site': 'same-origin' }, `password=${'a'.repeat(4991)}`))
+    const { cookie } = await session(app)
+    const refused = await logout(app, { cookie }, 'wrong')
+    expect(refused.status).toBe(403)
+    expectHeaders(refused)
+  })
+
+  it('pins Pico 2.1.1 classless with an SRI hash and keeps the page CSP', () => {
+    expect(PICO_CSS_URL).toBe('https://cdn.jsdelivr.net/npm/@picocss/pico@2.1.1/css/pico.classless.min.css')
+    expect(PICO_CSS_INTEGRITY).toMatch(/^sha384-[A-Za-z0-9+/]{64}$/)
+    expect(PAGE_CSP).toBe(
+      "default-src 'none'; style-src https://cdn.jsdelivr.net; img-src 'self' data:; script-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+    )
+  })
+
+  it('allows only Pico from jsDelivr: no script, class or style attribute and one absolute URL in src or href, on every page', async () => {
     expect(PAGE_CSP).toContain("frame-ancestors 'none'")
     const app = setup()
     const { cookie } = await session(app)
-    const bodies = [await (await app.request('http://api.test/login')).text(), await (await app.request('http://api.test/admin', { headers: { cookie } })).text()]
+    const production = setup({ NFSE_ENVIRONMENT: 'production' })
+    const productionSession = await session(production)
+    const bodies = [
+      await (await app.request('http://api.test/login')).text(),
+      await (await login(app, 'wrong password 12', { 'x-forwarded-for': '198.51.100.30' })).text(),
+      await (await login(app, PASSWORD, { 'x-forwarded-for': '198.51.100.30' })).text(),
+      await (await app.request('http://api.test/admin', { headers: { cookie } })).text(),
+      await (await production.request('http://api.test/admin', { headers: { cookie: productionSession.cookie } })).text(),
+      await (await rawLogin(app, PASSWORD, { 'sec-fetch-site': 'cross-site' })).text(),
+      await (await rawLogin(app, '', { 'sec-fetch-site': 'same-origin' }, `password=${'a'.repeat(4991)}`)).text(),
+      await (await logout(app, { cookie }, 'wrong')).text(),
+    ]
     for (const body of bodies) {
+      expect(body).toContain('<html')
       expect(body).not.toContain('<script')
+      expect(body).not.toMatch(/\s(class|style)=/)
       const urls = [...body.matchAll(/(?:src|href)="(https?:\/\/[^"]+)"/g)].map((match) => match[1])
       expect(urls).toEqual([PICO_CSS_URL])
     }

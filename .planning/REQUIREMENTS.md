@@ -17,11 +17,11 @@ Requirements for milestone v1.0 (Painel administrativo). Each maps to roadmap ph
 ### Authentication
 
 - [ ] **AUTH-01**: When `ADMIN_PASSWORD` is empty, `/login` and `/admin` answer 404 and `/v1` accepts only the Bearer token, exactly as today
-- [ ] **AUTH-02**: Admin can open `/login`, enter the password, and land on `/admin` when it matches the hash
-- [ ] **AUTH-03**: A wrong password shows an error on `/login` without saying more, and repeated failures from the same address are slowed down
+- [x] **AUTH-02**: Admin can open `/login`, enter the password, and land on `/admin` when it matches the hash
+- [x] **AUTH-03**: A wrong password shows an error on `/login` without saying more, and repeated failures from the same address are slowed down
 - [ ] **AUTH-04**: A successful login sets an HttpOnly, SameSite=Strict session cookie (Secure over HTTPS) that expires after 12 hours
 - [ ] **AUTH-05**: With that cookie, the browser can call the `/v1` routes; write calls (POST) also need a CSRF token, and external systems keep using the Bearer token unchanged
-- [ ] **AUTH-06**: Admin can log out, which ends the session; visiting `/admin` without a valid session redirects to `/login`
+- [x] **AUTH-06**: Admin can log out, which ends the session; visiting `/admin` without a valid session redirects to `/login`
 
 ### Notas panel
 
@@ -67,11 +67,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 | PASS-03 | Phase 1 | Pending |
 | PASS-04 | Phase 1 | Pending |
 | AUTH-01 | Phase 1 | Pending |
-| AUTH-02 | Phase 1 | Pending |
-| AUTH-03 | Phase 1 | Pending |
+| AUTH-02 | Phase 1 | Complete |
+| AUTH-03 | Phase 1 | Complete |
 | AUTH-04 | Phase 1 | Pending |
 | AUTH-05 | Phase 1 | Pending |
-| AUTH-06 | Phase 1 | Pending |
+| AUTH-06 | Phase 1 | Complete |
 | PANEL-01 | Phase 2 | Pending |
 | PANEL-02 | Phase 2 | Pending |
 | PANEL-03 | Phase 2 | Pending |
