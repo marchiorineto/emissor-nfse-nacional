@@ -1,7 +1,7 @@
 ---
 phase: 01-admin-password-and-login
 verified: 2026-11-20T21:20:00Z
-status: passed
+status: human_needed
 score: 5/5 must-haves verified
 covered_files:
   - .env.example
