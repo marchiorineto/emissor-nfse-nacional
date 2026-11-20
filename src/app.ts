@@ -149,9 +149,22 @@ export const createApp = ({ env, repo, gov, certificate, now = Date.now }: AppDe
     return nota ? c.json(view(originOf(c.req.url), nota, c.req.query('xml') === '1')) : c.json({ error: 'nota not found' }, 404)
   })
 
+  /**
+   * The nota's PDF. `?download=1` is the panel's opt-in (D-18): it answers `attachment`, with the file named by the
+   * NFS-e (or DPS) number because the id is free text that may not fit in a header (RESEARCH Pitfall 7). Without it the
+   * answer stays inline for Bearer clients; that inline filename still uses the id, a known pre-existing issue for ids
+   * outside Latin-1, left as is.
+   */
   app.get('/v1/notas/:id/pdf', async (c) => {
-    const pdf = await notas().pdf(c.req.param('id'))
+    const id = c.req.param('id')
+    const service = notas()
+    const pdf = await service.pdf(id)
     if (!pdf) return c.json({ error: 'nota not issued' }, 404)
+    if (c.req.query('download') === '1') {
+      const nota = await service.get(id)
+      const number = String(nota?.nfseNumber ?? nota?.dpsNumber ?? '').replace(/[^0-9A-Za-z-]/g, '') || 'nota'
+      return new Response(pdf, { headers: { 'content-type': 'application/pdf', 'content-disposition': `attachment; filename="nfse-${number}.pdf"` } })
+    }
     return new Response(pdf, { headers: { 'content-type': 'application/pdf', 'content-disposition': `inline; filename="nfse-${c.req.param('id')}.pdf"` } })
   })
 
