@@ -1,10 +1,10 @@
 import type { Hono } from 'hono'
-import { getCookie, setCookie } from 'hono/cookie'
+import { deleteCookie, getCookie, setCookie } from 'hono/cookie'
 import { html } from 'hono/html'
 import type { HtmlEscapedString } from 'hono/utils/html'
 import type { Env } from './env.ts'
 import { verifyPassword } from './password.ts'
-import { csrfToken, isHttps, issueSession, readSession, SESSION_COOKIE, SESSION_SECONDS } from './session.ts'
+import { csrfToken, isHttps, issueSession, readSession, SESSION_COOKIE, SESSION_SECONDS, timingSafeEqual } from './session.ts'
 
 /** Pico.css, pinned to an exact version and loaded with its Subresource Integrity hash (nothing is vendored). */
 export const PICO_CSS_URL = 'https://cdn.jsdelivr.net/npm/@picocss/pico@2.1.1/css/pico.min.css'
@@ -100,6 +100,21 @@ export const registerAdmin = (app: Hono, { env, key, now }: AdminDeps): void => 
   app.use('/admin/*', async (c, next) => {
     if (!sessionOf(getCookie(c, SESSION_COOKIE))) return c.redirect('/login', 303)
     await next()
+  })
+
+  // Logout only clears this browser's cookie: there is no revocation list, so a copied cookie stays valid until its
+  // 12 h expiry, an accepted risk (D-04). There is no GET handler, so a GET does not log out (D-15).
+  app.post('/logout', async (c) => {
+    const clear = () => {
+      deleteCookie(c, SESSION_COOKIE, { path: '/', secure: isHttps(c.req.url, env.PUBLIC_URL, c.req.header('x-forwarded-proto')) })
+      return c.redirect('/login', 303)
+    }
+    const session = sessionOf(getCookie(c, SESSION_COOKIE))
+    if (!session) return clear()
+    const form = await c.req.parseBody().catch(() => ({}) as Record<string, unknown>)
+    const csrf = typeof form.csrf === 'string' ? form.csrf : ''
+    if (!timingSafeEqual(csrf, csrfToken(key, session.id))) return c.text('Sessão expirada ou formulário inválido. Recarregue a página.', 403)
+    return clear()
   })
 
   app.get('/admin', (c) => {
