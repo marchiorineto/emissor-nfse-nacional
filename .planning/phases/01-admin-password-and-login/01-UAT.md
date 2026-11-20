@@ -1,19 +1,14 @@
 ---
-status: testing
+status: complete
 phase: 01-admin-password-and-login
 source: [01-VERIFICATION.md]
 started: 2026-11-20T20:35:00Z
-updated: 2026-11-20T21:17:51.814Z
+updated: 2026-11-20T21:43:37.931Z
 ---
 
 ## Current Test
-<!-- OVERWRITE each test - shows where we are -->
 
-number: 5
-name: Login card centered after fix G-01-4
-expected: |
-  After pulling fix 62c8cce and restarting `pnpm start`, http://localhost:8080/login on desktop (light and dark) and a narrow window shows one narrow card centered on the screen: 'Emissor de NFS-e' with 'Painel administrativo' under it, a card-width Senha field and Entrar button; a wrong password still turns the field red with 'Senha incorreta.'; the page looks decent
-awaiting: user response
+[testing complete]
 
 ## Tests
 
@@ -39,14 +34,14 @@ severity: cosmetic
 
 ### 5. Login card centered after fix G-01-4
 expected: After pulling fix 62c8cce and restarting `pnpm start`, http://localhost:8080/login on desktop (light and dark) and a narrow window shows one narrow card centered on the screen: 'Emissor de NFS-e' with 'Painel administrativo' under it, a card-width Senha field and Entrar button; a wrong password still turns the field red with 'Senha incorreta.'; the page looks decent
-result: [pending]
+result: pass
 
 ## Summary
 
 total: 5
-passed: 2
+passed: 3
 issues: 2
-pending: 1
+pending: 0
 skipped: 0
 blocked: 0
 
@@ -80,10 +75,12 @@ blocked: 0
 
 - gap_id: G-01-4
   truth: "/login is centered with side gutters and no longer looks 'ugly'; the password field and Entrar button are a sensible size, not page-wide"
-  status: failed
+  status: resolved
   reason: "User reported: the /login still looks like shit though. huge field and button"
   severity: cosmetic
   test: 4
+  resolved_by: 01-06-PLAN.md
+  resolved_at: 2026-11-20
   root_cause: "Pico 2.1.1 classless sizes body > main to the container breakpoint (up to ~1450 px on wide screens) and gives every input and submit button width:100%, so the single password field and the Entrar button stretch across the whole page on desktop. Nothing narrows the login form: there are no class attributes and PAGE_CSP allows styles only from cdn.jsdelivr.net, so no local rule can cap its width."
   artifacts:
     - path: "src/admin.ts"
