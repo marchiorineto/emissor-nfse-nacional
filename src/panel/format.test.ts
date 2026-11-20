@@ -13,6 +13,8 @@ import {
   numberCell,
   PAGE_SIZE,
   parseStatus,
+  pdfFilename,
+  pdfHref,
   STATUS_ORDER,
   statusLabel,
   statusSearch,
@@ -190,5 +192,34 @@ describe('hasMore', () => {
     expect(hasMore(20)).toBe(true)
     expect(hasMore(19)).toBe(false)
     expect(hasMore(0)).toBe(false)
+  })
+})
+
+describe('pdfHref', () => {
+  it('is the relative download route of a nota with an access key', () => {
+    expect(pdfHref({ id: 'pedido-1', accessKey: 'K' })).toBe('/v1/notas/pedido-1/pdf?download=1')
+  })
+
+  it('encodes a hostile id as one path segment', () => {
+    expect(pdfHref({ id: 'loja/123 #?', accessKey: 'K' })).toBe('/v1/notas/loja%2F123%20%23%3F/pdf?download=1')
+  })
+
+  it('is undefined without an access key, whatever the status', () => {
+    expect(pdfHref({ id: 'pedido-1' })).toBeUndefined()
+    expect(pdfHref({ id: 'pedido-1', status: 'issued' } as Parameters<typeof pdfHref>[0])).toBeUndefined()
+  })
+
+  it('ignores the public links of the API response and stays on the same origin', () => {
+    const view = { id: 'pedido-1', accessKey: 'K', links: { pdf: 'https://evil.example/pdf' } }
+    const href = pdfHref(view)
+    expect(href?.startsWith('/v1/notas/')).toBe(true)
+    expect(href).not.toContain('evil.example')
+  })
+})
+
+describe('pdfFilename', () => {
+  it('names the file from the NFS-e number, else the DPS number', () => {
+    expect(pdfFilename({ nfseNumber: '7', dpsNumber: 12 })).toBe('nfse-7.pdf')
+    expect(pdfFilename({ dpsNumber: 12 })).toBe('nfse-12.pdf')
   })
 })

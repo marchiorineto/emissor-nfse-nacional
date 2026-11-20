@@ -37,3 +37,7 @@ export function parseStatus(search: string): NotaStatus | ''
 export function statusSearch(status: string): string
 /** Whether a page of this many notas may be followed by another: true only for a full page. */
 export function hasMore(count: number): boolean
+/** The same-origin download link of a nota's PDF, or undefined when the nota has no access key. */
+export function pdfHref(nota: Pick<NotaView, 'id' | 'accessKey'>): string | undefined
+/** The file name the download is saved as: nfse-<NFS-e number, else DPS number>.pdf. */
+export function pdfFilename(nota: Pick<NotaView, 'nfseNumber' | 'dpsNumber'>): string
