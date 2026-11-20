@@ -1,5 +1,5 @@
 ---
-status: complete
+status: diagnosed
 phase: 01-admin-password-and-login
 source: [01-VERIFICATION.md]
 started: 2026-11-20T20:35:00Z
@@ -43,5 +43,20 @@ blocked: 0
   reason: "User reported: styled but ugly, no console errors"
   severity: cosmetic
   test: 3
-  artifacts: []
-  missing: []
+  root_cause: "Pages load the class-based pico.min.css without a .container, so body>header/main get no horizontal gutters or max-width (content flush to viewport edges, 1440 px-wide inputs on desktop); the logout submit button inherits Pico's width:100% and dominates the /admin header; production and homologação badges share the same <mark> style; the login error is unstyled (no aria-invalid/<small>); 403/413/CSRF refusals are bare text/plain pages. All documented in 01-UI-REVIEW.md (Spacing 2/4, Visuals 2/4) and not yet fixed."
+  artifacts:
+    - path: "src/admin.ts"
+      issue: "PICO_CSS_URL (line 21) points to class-based pico.min.css; layout has no container"
+    - path: "src/admin.ts"
+      issue: "/admin header (lines 85-91) renders Sair as full-width submit button"
+    - path: "src/admin.ts"
+      issue: "environment badge (line 87) identical for produção and homologação"
+    - path: "src/admin.ts"
+      issue: "login error (lines 73-75) not tied to input via aria-invalid/aria-describedby; refusals (lines 144,145,189) are text/plain dead ends"
+  missing:
+    - "Switch to Pico classless build (css/pico.classless.min.css) with its own SRI hash; update tests asserting PICO_CSS_URL/SRI"
+    - "Put /admin header in a Pico <nav> so Sair takes content width on the right"
+    - "Give produção a visually distinct badge from homologação"
+    - "Mark invalid password field with aria-invalid + <small id=login-error> described-by"
+    - "Render 403/413/CSRF refusals as minimal pages with a link back to /login or /admin"
+  debug_session: ".planning/phases/01-admin-password-and-login/01-UI-REVIEW.md"
