@@ -1,6 +1,6 @@
 // The panel's browser module: reads GET /v1/notas with the session cookie and renders the list.
 // Every API string reaches the DOM through textContent; nothing here ever parses markup or sets a style.
-import { formatBrl, hasMore, isAlertStatus, listDate, listQuery, numberCell, parseStatus, statusLabel, statusSearch, takerCell } from './format.js'
+import { formatBrl, hasMore, isAlertStatus, listDate, listQuery, numberCell, parseStatus, pdfFilename, pdfHref, statusLabel, statusSearch, takerCell } from './format.js'
 
 const body = document.getElementById('notas-body')
 const state = document.getElementById('notas-state')
@@ -63,7 +63,16 @@ const renderRow = (nota) => {
   situation.append(label)
   tr.append(situation)
 
-  tr.append(cell('PDF'))
+  const pdf = cell('PDF')
+  const href = pdfHref(nota)
+  if (href) {
+    const link = text('a', 'PDF')
+    link.href = href
+    link.download = pdfFilename(nota)
+    link.setAttribute('aria-label', `Baixar PDF da ${number.text}`)
+    pdf.append(link)
+  }
+  tr.append(pdf)
   return tr
 }
 

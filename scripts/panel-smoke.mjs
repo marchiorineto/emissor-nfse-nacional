@@ -200,6 +200,16 @@ const send = (method, params = {}, sessionId) =>
     socket.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }))
   })
 
+// Downloads and tabs, recorded for the whole run: the row PDF link must save a file without opening a tab.
+const downloads = []
+const createdTargets = []
+listeners.push((message) => {
+  if (message.method === 'Browser.downloadWillBegin') downloads.push(message.params)
+  if (message.method === 'Target.targetCreated') createdTargets.push(message.params.targetInfo)
+})
+await send('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: join(profile, 'downloads'), eventsEnabled: true })
+await send('Target.setDiscoverTargets', { discover: true })
+
 const { targetId } = await send('Target.createTarget', { url: 'about:blank' })
 const { sessionId } = await send('Target.attachToTarget', { targetId, flatten: true })
 const page = (method, params) => send(method, params, sessionId)
@@ -490,6 +500,34 @@ await check('filter-empty', async () => {
   await waitFor(`document.getElementById('notas-state').textContent === 'Nenhuma nota encontrada.'`)
   assert((await evaluate(`document.querySelectorAll('#notas-body tr').length`)) === 0, 'rows shown for a filter without matches')
   assert((await evaluate(`document.getElementById('more').hidden`)) === true, 'Carregar mais is visible for an empty list')
+  assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
+})
+
+await check('pdf-row-download', async () => {
+  await goto(`${main.origin}/admin`)
+  await waitFor(`document.querySelectorAll('#notas-body tr').length === 20`)
+  const links = await evaluate(`[...document.querySelectorAll('#notas-body tr')].map((tr) => {
+    const a = tr.querySelector('a[download]')
+    return { status: tr.dataset.status, number: tr.children[3].textContent, href: a?.getAttribute('href') ?? null, download: a?.getAttribute('download') ?? null, label: a?.getAttribute('aria-label') ?? null }
+  })`)
+  for (const row of links) {
+    if (['pending', 'rejected', 'unknown'].includes(row.status)) assert(row.href === null, `a ${row.status} row has a PDF link (${row.href})`)
+    else {
+      assert(/^\/v1\/notas\/[^/]+\/pdf\?download=1$/.test(row.href ?? ''), `${row.status} row ${row.number}: href is "${row.href}"`)
+      assert(row.download === `nfse-${/\d+/.exec(row.number)?.[0]}.pdf`, `${row.number}: download is "${row.download}"`)
+      assert(row.label === `Baixar PDF da ${row.number}`, `${row.number}: aria-label is "${row.label}"`)
+    }
+  }
+  const issued = links.find((row) => row.status === 'issued' && row.href)
+  assert(issued, 'no issued row with a PDF link')
+  const before = { downloads: downloads.length, targets: createdTargets.length }
+  await evaluate(`document.querySelector('#notas-body tr[data-status="issued"] a[download]').click()`)
+  for (let wait = 0; wait < 100 && downloads.length === before.downloads; wait++) await new Promise((resolve) => setTimeout(resolve, 50))
+  const started = downloads[before.downloads]
+  const expected = `nfse-${/\d+/.exec(issued.number)?.[0]}.pdf`
+  assert(started?.suggestedFilename === expected, `download starts as "${started?.suggestedFilename}", expected ${expected}`)
+  assert((await evaluate('location.pathname')) === '/admin', 'the page left /admin')
+  assert(createdTargets.length === before.targets, `a new target opened: ${createdTargets.slice(before.targets).map((t) => `${t.type} ${t.url}`).join(', ')}`)
   assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
 })
 
