@@ -447,6 +447,13 @@ describe('panel security headers', () => {
     expect(PANEL_CSS).toMatch(/main\[data-card\] > article \{[^}]*max-width: 24rem/)
   })
 
+  it('styles the nota dialog in /panel.css', () => {
+    expect(PANEL_CSS).toContain('html:has(dialog[open])')
+    expect(PANEL_CSS).toMatch(/\[data-errors\][^{]*\{[^}]*--pico-del-color/)
+    expect(PANEL_CSS).toMatch(/#nota-dialog dd[^{]*\{[^}]*overflow-wrap: anywhere/)
+    expect(PANEL_CSS).toMatch(/#nota-dialog dl \{[^}]*display: grid/)
+  })
+
   it('shows login and refusals as one narrow centered card', async () => {
     expect(PANEL_CSS).toMatch(/main\[data-card\] \{[^}]*place-items: center/)
     expect(PANEL_CSS).toMatch(/main\[data-card\] > article \{[^}]*max-width: 24rem/)

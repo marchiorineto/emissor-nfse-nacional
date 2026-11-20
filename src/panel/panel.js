@@ -251,6 +251,11 @@ dialog.addEventListener('close', () => {
   if (parseNotaHash(location.hash) !== '') history.replaceState(null, '', location.pathname + location.search)
 })
 
+// A click on the dialog element itself lands on the backdrop (the article fills the rest): close like Fechar (D-13).
+dialog.addEventListener('click', (event) => {
+  if (event.target === dialog) dialog.close()
+})
+
 select.addEventListener('change', () => {
   history.pushState(null, '', location.pathname + statusSearch(select.value))
   sync()

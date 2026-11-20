@@ -270,13 +270,18 @@ await page('Network.setCookie', { name: 'nfse_admin', value: cookie, url: `${mai
 
 // (e) What the page logs and sends, reset on every navigation.
 let consoleErrors = []
+const everyConsoleError = []
 let v1Requests = []
 const extraInfo = new Map()
 listeners.push((message) => {
   if (message.sessionId !== sessionId) return
   const { method, params } = message
-  if (method === 'Log.entryAdded' && ['security', 'javascript'].includes(params.entry.source)) consoleErrors.push(`${params.entry.source}: ${params.entry.text}`)
-  if (method === 'Runtime.exceptionThrown') consoleErrors.push(`exception: ${params.exceptionDetails.text} ${params.exceptionDetails.exception?.description ?? ''}`)
+  const record = (line) => {
+    consoleErrors.push(line)
+    everyConsoleError.push(line)
+  }
+  if (method === 'Log.entryAdded' && ['security', 'javascript'].includes(params.entry.source)) record(`${params.entry.source}: ${params.entry.text}`)
+  if (method === 'Runtime.exceptionThrown') record(`exception: ${params.exceptionDetails.text} ${params.exceptionDetails.exception?.description ?? ''}`)
   if (method === 'Network.requestWillBeSent' && new URL(params.request.url).pathname.startsWith('/v1/')) {
     v1Requests.push({ requestId: params.requestId, url: new URL(params.request.url), headers: params.request.headers })
   }
@@ -738,6 +743,57 @@ await check('dialog-pdf', async () => {
     assert((await evaluate(`document.querySelectorAll('#nota-body a').length`)) === 0, `${id}: the dialog body offers links`)
   }
   assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
+})
+
+await check('dialog-backdrop', async () => {
+  await viewport(1280, false)
+  await goto(`${main.origin}/admin`)
+  await waitFor(`document.querySelectorAll('#notas-body tr').length === 20`)
+  await openFromRow()
+  await waitFor(`!/^Carregando/.test(document.getElementById('nota-title').textContent)`)
+  for (const type of ['mousePressed', 'mouseReleased']) await page('Input.dispatchMouseEvent', { type, x: 5, y: 5, button: 'left', clickCount: 1 })
+  await waitFor(`!document.getElementById('nota-dialog').open && location.hash === ''`)
+  assert(!(await evaluate('location.href')).endsWith('#'), 'a backdrop click left a bare # in the URL')
+  assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
+})
+
+await check('dialog-scroll-lock', async () => {
+  await goto(`${main.origin}/admin`)
+  await waitFor(`document.querySelectorAll('#notas-body tr').length === 20`)
+  const overflow = () => evaluate(`getComputedStyle(document.documentElement).overflow`)
+  assert((await overflow()) !== 'hidden', `the page is locked with no dialog open (overflow ${await overflow()})`)
+  await openFromRow()
+  assert((await overflow()) === 'hidden', `the page behind the dialog is not locked (overflow ${await overflow()})`)
+  await evaluate(`document.querySelector('#nota-dialog form button').click()`)
+  await waitFor(`!document.getElementById('nota-dialog').open`)
+  assert((await overflow()) !== 'hidden', `the page stays locked after closing (overflow ${await overflow()})`)
+})
+
+await check('dialog-narrow', async () => {
+  await viewport(1280, false)
+  await openDeepLink('rej')
+  await shot('dialog-wide.png')
+  await viewport(375, true)
+  await openDeepLink('exp')
+  const narrow = await evaluate(`(() => {
+    const article = document.querySelector('#nota-dialog article')
+    return {
+      page: document.documentElement.scrollWidth,
+      scroll: article.scrollWidth,
+      client: article.clientWidth,
+      columns: getComputedStyle(document.querySelector('#nota-body dl')).gridTemplateColumns.trim().split(/\\s+/).length,
+    }
+  })()`)
+  assert(narrow.page <= 375, `the page scrolls sideways: scrollWidth ${narrow.page} at 375 px`)
+  assert(narrow.scroll <= narrow.client, `the dialog article overflows: scrollWidth ${narrow.scroll} > clientWidth ${narrow.client}`)
+  assert(narrow.columns === 1, `the dl has ${narrow.columns} columns at 375 px, expected 1`)
+  await openDeepLink('rej')
+  await shot('dialog-narrow.png')
+  await viewport(1280, false)
+})
+
+await check('console-clean', async () => {
+  assert(everyConsoleError.length === 0, `console errors during the run: ${everyConsoleError.join(' | ')}`)
 })
 
 const passed = results.filter(Boolean).length

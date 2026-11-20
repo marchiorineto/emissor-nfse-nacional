@@ -129,6 +129,56 @@ main[data-card] > article > p:last-child {
     box-shadow: none;
   }
 }
+html:has(dialog[open]) {
+  overflow: hidden;
+}
+#nota-dialog dl {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: var(--pico-spacing);
+}
+#nota-dialog dt {
+  color: var(--pico-muted-color);
+  font-weight: 600;
+}
+#nota-dialog dd {
+  margin-left: 0;
+  overflow-wrap: anywhere;
+}
+#nota-dialog [data-errors] {
+  border-left: 0.25rem solid var(--pico-del-color, currentColor);
+  padding: var(--pico-spacing);
+  margin-bottom: var(--pico-spacing);
+}
+#nota-dialog [data-errors] h3 {
+  color: var(--pico-del-color);
+}
+#nota-dialog [data-errors] ul {
+  margin-bottom: 0;
+}
+#nota-dialog [role="note"] {
+  background-color: var(--pico-mark-background-color);
+  color: var(--pico-mark-color);
+  padding: var(--pico-spacing);
+}
+#nota-status [data-status="rejected"],
+#nota-status [data-status="unknown"] {
+  color: var(--pico-del-color);
+  font-weight: 600;
+}
+#nota-status [data-status="issued"] {
+  color: var(--pico-ins-color);
+}
+#nota-status [data-status="canceled"],
+#nota-status [data-status="replaced"],
+#nota-status [data-status="pending"] {
+  color: var(--pico-muted-color);
+}
+@media (max-width: 767px) {
+  #nota-dialog dl {
+    grid-template-columns: 1fr;
+  }
+}
 `
 
 /**
