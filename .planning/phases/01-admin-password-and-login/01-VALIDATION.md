@@ -55,6 +55,9 @@ Filled in by the planner and executor. Requirement-to-test seed, from 01-RESEARC
 | 01-04-T1 | 01-04 | 3 | AUTH-05 | T-01-25 | Cookie alone reads `/v1/notas`; Bearer tests unchanged | app (tracer) | `pnpm exec vitest run src/appSession.test.ts src/app.test.ts` | ✅ | ✅ green |
 | 01-04-T2 | 01-04 | 3 | AUTH-05, AUTH-01, PASS-04 | T-01-25..T-01-28 | CSRF 403 on cookie writes; Bearer priority; disabled panel ignores cookies; `app.routes` invariant | app | `pnpm exec vitest run src/appSession.test.ts src/app.test.ts` | ✅ | ✅ green |
 | 01-04-T3 | 01-04 | 3 | (docs, startup) | T-01-30, T-01-31 | Startup notice of panel state; pt-BR README section | smoke + suite | `pnpm test` | n/a | ✅ green |
+| 01-05-T1 | 01-05 | 4 | AUTH-02, AUTH-06 (gap G-01-3) | 01-05 threat model | Classless Pico 2.1.1 pinned with an SRI hash equal to jsDelivr's; PAGE_CSP unchanged | unit + network check | `pnpm exec vitest run src/admin.test.ts` (plus the plan's curl/openssl hash check) | ✅ | ✅ green |
+| 01-05-T2 | 01-05 | 4 | AUTH-03, AUTH-06 (gap G-01-3) | 01-05 threat model | Nav header with labelled CNPJ, distinct light/dark badges, compact Sair; wrong password sets aria-invalid + aria-describedby, 429 sets only aria-describedby | app | `pnpm exec vitest run src/admin.test.ts` | ✅ | ✅ green |
+| 01-05-T3 | 01-05 | 4 | AUTH-02, AUTH-06 (gap G-01-3) | 01-05 threat model | 403 cross-site, 413, 403 bad CSRF render HTML refusal pages with one link back and panel headers; no script/class/style and only the Pico URL on every page | app | `pnpm exec vitest run src/admin.test.ts` | ✅ | ✅ green |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
@@ -78,6 +81,7 @@ Under tracer-first planning each file is created by the first task that needs it
 |----------|-------------|------------|-------------------|
 | Password not echoed while typing | PASS-01 | Needs a real TTY | Run `pnpm run admin-password` in a terminal; confirm no characters appear |
 | Pico.css styling loads with SRI | AUTH-02 | Needs a browser | Open `/login` and `/admin`; confirm styled page and no SRI error in console |
+| Classless layout: centered content with side gutters, nav header alignment, badge contrast in light and dark OS schemes | AUTH-02, AUTH-06 (G-01-3) | Visual; needs a browser | Open `/login` and `/admin` in light and dark mode, in `restricted` and `production`; confirm gutters, nav layout, compact Sair and distinct badges (UAT re-test of G-01-3) |
 | Secure cookie flag over HTTPS | AUTH-04 | Needs real HTTPS / proxy | Log in over HTTPS; check cookie flags in devtools |
 
 ---
@@ -104,13 +108,14 @@ Under tracer-first planning each file is created by the first task that needs it
 | PASS-03 | `src/adminPasswordScript.test.ts` (from .env.example, other lines/CRLF kept, mode 0600, no plaintext), `src/password.test.ts` | COVERED |
 | PASS-04 | `src/adminPasswordScript.test.ts` (second run), `src/admin.test.ts` + `src/appSession.test.ts` (cookie under another hash refused) | COVERED |
 | AUTH-01 | `src/admin.test.ts` (404 when off, whitespace-only), `src/appSession.test.ts` (panel off ignores cookies, Bearer kept) | COVERED |
-| AUTH-02 | `src/admin.test.ts` (login 303 → panel skeleton, cross-site refusal, 413, headers); Pico styling is manual-only | COVERED |
-| AUTH-03 | `src/admin.test.ts` (401 "Senha incorreta.", 429 + Retry-After, parallel), `src/session.test.ts` (curve, reset, prune, cap, clientIp) | COVERED |
+| AUTH-02 | `src/admin.test.ts` (login 303 → panel skeleton, HTML refusal pages for cross-site and 413, headers, classless SRI pin, page-wide markup invariants); Pico styling is manual-only | COVERED |
+| AUTH-03 | `src/admin.test.ts` (401 "Senha incorreta." with aria-invalid field, 429 + Retry-After without aria-invalid, parallel), `src/session.test.ts` (curve, reset, prune, cap, clientIp) | COVERED |
 | AUTH-04 | `src/admin.test.ts` (HttpOnly, SameSite=Strict, Max-Age=43200, Secure only over HTTPS, 12 h boundary), `src/session.test.ts` | COVERED |
 | AUTH-05 | `src/appSession.test.ts` (cookie reads, CSRF on writes, Bearer priority, CSRF invariant on every non-GET route) | COVERED |
-| AUTH-06 | `src/admin.test.ts` (logout with CSRF, wrong CSRF 403, GET does not log out, guard redirect) | COVERED |
+| AUTH-06 | `src/admin.test.ts` (nav header with Sair, logout with CSRF, wrong CSRF 403 HTML page linking back, GET does not log out, guard redirect) | COVERED |
 
 Evidence: `pnpm test`: 14 files, 191 passed, 1 skipped (2026-11-20).
+Re-audit after gap-closure plan 01-05: `pnpm test`: 14 files, 197 passed, 1 skipped; `pnpm run typecheck` clean (2026-11-20). Plan 01-05's three tasks map to existing automated tests; no new gaps.
 
 ## Validation Audit 2026-11-20
 
