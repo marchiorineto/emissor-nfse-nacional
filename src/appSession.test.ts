@@ -1,9 +1,9 @@
 import { afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { adminPanelNotice, createApp } from './app.ts'
 import { envFrom } from './env.ts'
-import type { Gov, GovResult } from './notas.ts'
+import type { Gov, GovResult, Nota, Repo } from './notas.ts'
 import { hashPassword } from './password.ts'
-import { createMemoryRepo } from './repo.ts'
+import { createMemoryRepo, createSqliteRepo, openDatabase } from './repo.ts'
 import { issueSession, sessionKey } from './session.ts'
 
 const TOKEN = 'secret-token'
@@ -33,10 +33,10 @@ beforeAll(async () => {
 
 const clock = { ms: Date.UTC(2026, 10, 20, 12) }
 
-const setup = (overrides: Partial<typeof env> = {}) =>
+const setup = (overrides: Partial<typeof env> = {}, repo: Repo = createMemoryRepo()) =>
   createApp({
     env: { ...env, ADMIN_PASSWORD: HASH, ...overrides },
-    repo: createMemoryRepo(),
+    repo,
     gov,
     certificate: () => ({ error: 'no certificate' }),
     now: () => clock.ms,
@@ -125,6 +125,66 @@ describe('/v1 through the session cookie', () => {
     const health = await app.request('http://api.test/health', { headers: { cookie } })
     expect(health.status).not.toBe(401)
     expect(await health.json()).toHaveProperty('ok')
+  })
+})
+
+const savedNota = (id: string, createdAt: string, status: Nota['status'] = 'issued'): Nota => ({
+  id,
+  status,
+  request: { id, serviceCode: '080201', description: 'Aula', valueCents: 100 },
+  dpsNumber: 1,
+  dpsId: `DPS${id}`,
+  createdAt,
+  updatedAt: createdAt,
+})
+
+describe('notas list pages through the session cookie', () => {
+  const T1 = '2026-11-20T12:00:01.000Z'
+  const T0 = '2026-11-20T12:00:00.000Z'
+
+  const page = async (app: App, cookie: string, query: Record<string, string>): Promise<string[]> => {
+    const res = await app.request(`http://api.test/v1/notas?${new URLSearchParams(query)}`, { headers: { cookie } })
+    expect(res.status).toBe(200)
+    return ((await res.json()) as { notas: Array<{ id: string }> }).notas.map((n) => n.id)
+  }
+
+  const seeded = async () => {
+    const repo = createSqliteRepo(openDatabase(':memory:'))
+    await repo.save(savedNota('a', T1))
+    await repo.save(savedNota('b', T0))
+    await repo.save(savedNota('c', T0))
+    const app = setup({}, repo)
+    return { repo, app, cookie: await loginCookie(app, '198.51.100.20') }
+  }
+
+  it('returns every nota exactly once across pages, even when two share a createdAt at the page edge', async () => {
+    const { app, cookie } = await seeded()
+    expect(await page(app, cookie, { limit: '2' })).toEqual(['a', 'c'])
+    expect(await page(app, cookie, { limit: '2', before: T0, beforeId: 'c' })).toEqual(['b'])
+  })
+
+  it('keeps the old meaning of before alone', async () => {
+    const { app, cookie } = await seeded()
+    expect(await page(app, cookie, { before: T0 })).toEqual([])
+    expect(await page(app, cookie, { before: T1 })).toEqual(['c', 'b'])
+  })
+
+  it('ignores beforeId without before', async () => {
+    const { app, cookie } = await seeded()
+    expect(await page(app, cookie, { beforeId: 'c' })).toEqual(['a', 'c', 'b'])
+  })
+
+  it('keeps the status filter on every page', async () => {
+    const { repo, app, cookie } = await seeded()
+    await repo.save(savedNota('r', T0, 'rejected'))
+    expect(await page(app, cookie, { status: 'issued', limit: '2' })).toEqual(['a', 'c'])
+    expect(await page(app, cookie, { status: 'issued', limit: '2', before: T0, beforeId: 'c' })).toEqual(['b'])
+  })
+
+  it('treats a hostile beforeId as data', async () => {
+    const { app, cookie } = await seeded()
+    expect(await page(app, cookie, { before: T0, beforeId: "x'; DROP TABLE notas; --" })).toEqual(['c', 'b'])
+    expect(await page(app, cookie, {})).toEqual(['a', 'c', 'b'])
   })
 })
 

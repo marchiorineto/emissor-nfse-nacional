@@ -63,11 +63,12 @@ export const createSqliteRepo = (db: DatabaseSync): Repo => {
       if (!row) throw new Error('could not reserve a DPS number')
       return Number(row.value)
     },
-    list: async ({ status, limit, before }) => {
-      const filters = [status ? 'status = ?' : '', before ? 'created_at < ?' : ''].filter(Boolean)
+    list: async ({ status, limit, before, beforeId }) => {
+      const cursor = before && beforeId ? '(created_at, id) < (?, ?)' : before ? 'created_at < ?' : ''
+      const filters = [status ? 'status = ?' : '', cursor].filter(Boolean)
       const where = filters.length ? `WHERE ${filters.join(' AND ')}` : ''
-      const params = [status, before].filter((value): value is string => Boolean(value))
-      const rows = db.prepare(`SELECT data FROM notas ${where} ORDER BY created_at DESC LIMIT ?`).all(...params, limit)
+      const params = [status, before, before ? beforeId : undefined].filter((value): value is string => Boolean(value))
+      const rows = db.prepare(`SELECT data FROM notas ${where} ORDER BY created_at DESC, id DESC LIMIT ?`).all(...params, limit)
       return rows.map((row) => JSON.parse(String(row.data)) as Nota)
     },
   }

@@ -128,7 +128,7 @@ export const createApp = ({ env, repo, gov, certificate, now = Date.now }: AppDe
     const status = c.req.query('status') as NotaStatus | undefined
     if (status && !NOTA_STATUSES.includes(status)) return c.json({ error: `status: one of ${NOTA_STATUSES.join(', ')}` }, 400)
     const limit = Math.min(Number(c.req.query('limit') ?? 50) || 50, MAX_LIST)
-    const list = await notas().list({ status, limit, before: c.req.query('before') })
+    const list = await notas().list({ status, limit, before: c.req.query('before'), beforeId: c.req.query('beforeId') })
     const origin = originOf(c.req.url)
     return c.json({ notas: list.map((nota) => view(origin, nota)) })
   })
