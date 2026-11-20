@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import type { Context, Hono, MiddlewareHandler } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie'
@@ -57,12 +58,21 @@ main[data-card] > article > p:last-child {
 `
 
 /**
- * The Content-Security-Policy of every panel page: styles only from jsDelivr (Pico) and this origin (/panel.css), scripts only from this origin (room
- * for a Phase 2 script route), images from this origin plus data: (Pico embeds data: SVG icons), forms posting only here,
- * no framing, no base tag (D-12).
+ * The Content-Security-Policy of every panel page: styles only from jsDelivr (Pico) and this origin (/panel.css), scripts
+ * only from this origin (the panel modules under /admin/), fetch only to this origin (the panel reads /v1 with the session
+ * cookie), images from this origin plus data: (Pico embeds data: SVG icons), forms posting only here, no framing, no base
+ * tag (D-12).
  */
 export const PAGE_CSP =
-  "default-src 'none'; style-src 'self' https://cdn.jsdelivr.net; img-src 'self' data:; script-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
+  "default-src 'none'; style-src 'self' https://cdn.jsdelivr.net; img-src 'self' data:; script-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'; connect-src 'self'"
+
+/**
+ * The panel's browser modules: plain ES modules with no build step, read once at startup (a missing file fails the start,
+ * not a request) and served from /admin/ behind the session guard. Only these names are served; nothing else under src/ is.
+ */
+export const PANEL_SCRIPTS: ReadonlyMap<string, string> = new Map(
+  ['panel.js', 'format.js'].map((name) => [name, readFileSync(new URL(`./panel/${name}`, import.meta.url), 'utf8')]),
+)
 
 export interface AdminDeps {
   env: Env
@@ -81,7 +91,7 @@ export const environmentLabel = (environment: string): string =>
 
 type Html = HtmlEscapedString | Promise<HtmlEscapedString>
 
-/** The page shell: semantic markup only, no classes and no scripts. `html` escapes every interpolated value. */
+/** The page shell: semantic markup only, no classes; a script only when the page content brings one (/admin). `html` escapes every interpolated value. */
 const layout = (title: string, content: Html, csrf?: string): Html => html`<!doctype html>
 <html lang="pt-BR">
   <head>
@@ -129,8 +139,8 @@ const environmentBadge = (environment: string): Html =>
     : html`<mark data-theme="light">${environmentLabel(environment)}</mark>`
 
 /**
- * The panel skeleton: a nav header with issuer and environment badge on the left and logout on the right, then an empty area
- * for the notas list. The Sair button has no type attribute on purpose: inside a form it submits anyway, and leaving it off
+ * The panel skeleton: a nav header with issuer and environment badge on the left and logout on the right, then the notas list: a
+ * status line and a table that the /admin/panel.js module fills. The Sair button has no type attribute on purpose: inside a form it submits anyway, and leaving it off
  * keeps Pico's full-width and bottom-margin rules for typed submit buttons away, so it takes its content width in the nav.
  */
 const adminPage = (cnpj: string, environment: string, csrf: string): Html =>
@@ -156,7 +166,25 @@ const adminPage = (cnpj: string, environment: string, csrf: string): Html =>
           </ul>
         </nav>
       </header>
-      <main id="notas"></main>`,
+      <main id="notas">
+        <noscript><p>O painel precisa de JavaScript para mostrar as notas.</p></noscript>
+        <h2>Notas</h2>
+        <p id="notas-state" role="status"></p>
+        <table role="table">
+          <thead>
+            <tr role="row">
+              <th scope="col" role="columnheader">Competência</th>
+              <th scope="col" role="columnheader">Cliente</th>
+              <th scope="col" role="columnheader">Valor</th>
+              <th scope="col" role="columnheader">Número</th>
+              <th scope="col" role="columnheader">Situação</th>
+              <th scope="col" role="columnheader">PDF</th>
+            </tr>
+          </thead>
+          <tbody id="notas-body"></tbody>
+        </table>
+      </main>
+      <script type="module" src="/admin/panel.js"></script>`,
     csrf,
   )
 
@@ -272,6 +300,9 @@ export const registerAdmin = (app: Hono, { env, key, now }: AdminDeps): void => 
     if (!timingSafeEqual(csrf, csrfToken(key, session.id))) return c.html(refusalPage('Sessão expirada ou formulário inválido', '/admin', 'Voltar ao painel'), 403)
     return clear()
   })
+
+  // After the guard above, so a script is served only to a session; the allow-list is PANEL_SCRIPTS.
+  for (const [name, source] of PANEL_SCRIPTS) app.get(`/admin/${name}`, (c) => c.body(source, 200, { 'Content-Type': 'text/javascript; charset=utf-8' }))
 
   app.get('/admin', (c) => {
     const session = sessionOf(getCookie(c, SESSION_COOKIE))

@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
-import { PAGE_CSP, PANEL_CSS, PICO_CSS_INTEGRITY, PICO_CSS_URL } from './admin.ts'
+import { PAGE_CSP, PANEL_CSS, PANEL_SCRIPTS, PICO_CSS_INTEGRITY, PICO_CSS_URL } from './admin.ts'
 import { createApp } from './app.ts'
 import { envFrom } from './env.ts'
 import type { Gov, GovResult } from './notas.ts'
@@ -344,11 +344,11 @@ describe('panel security headers', () => {
     expect(PICO_CSS_URL).toBe('https://cdn.jsdelivr.net/npm/@picocss/pico@2.1.1/css/pico.classless.min.css')
     expect(PICO_CSS_INTEGRITY).toMatch(/^sha384-[A-Za-z0-9+/]{64}$/)
     expect(PAGE_CSP).toBe(
-      "default-src 'none'; style-src 'self' https://cdn.jsdelivr.net; img-src 'self' data:; script-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+      "default-src 'none'; style-src 'self' https://cdn.jsdelivr.net; img-src 'self' data:; script-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'; connect-src 'self'",
     )
   })
 
-  it('allows only Pico from jsDelivr: no script, class or style attribute and one absolute URL in src or href, on every page', async () => {
+  it('allows only Pico from jsDelivr: /admin alone has a module script, no page has a class or style attribute, one absolute URL in src or href', async () => {
     expect(PAGE_CSP).toContain("frame-ancestors 'none'")
     const app = setup()
     const { cookie } = await session(app)
@@ -366,7 +366,12 @@ describe('panel security headers', () => {
     ]
     for (const body of bodies) {
       expect(body).toContain('<html')
-      expect(body).not.toContain('<script')
+      if (body.includes('<main id="notas">')) {
+        expect(body.match(/<script/g)).toHaveLength(1)
+        expect(body).toContain('<script type="module" src="/admin/panel.js"></script>')
+      } else {
+        expect(body).not.toContain('<script')
+      }
       expect(body).not.toMatch(/\s(class|style)=/)
       const urls = [...body.matchAll(/(?:src|href)="(https?:\/\/[^"]+)"/g)].map((match) => match[1])
       expect(urls).toEqual([PICO_CSS_URL])
@@ -380,6 +385,39 @@ describe('panel security headers', () => {
     expect(res.headers.get('content-type')).toBe('text/css; charset=utf-8')
     expect(res.headers.get('x-content-type-options')).toBe('nosniff')
     expect(await res.text()).toBe(PANEL_CSS)
+  })
+
+  it('serves the panel modules to a session as text/javascript with the panel headers, and 303 to /login without one', async () => {
+    const app = setup()
+    const { cookie } = await session(app)
+    for (const name of ['panel.js', 'format.js']) {
+      const res = await app.request(`http://api.test/admin/${name}`, { headers: { cookie } })
+      expect(res.status).toBe(200)
+      expect(res.headers.get('content-type')).toBe('text/javascript; charset=utf-8')
+      expectHeaders(res)
+      expect(await res.text()).toBe(PANEL_SCRIPTS.get(name))
+      const anonymous = await app.request(`http://api.test/admin/${name}`)
+      expect(anonymous.status).toBe(303)
+      expect(anonymous.headers.get('location')).toBe('/login')
+      expectHeaders(anonymous)
+    }
+    for (const name of ['format.d.ts', 'nope.js']) {
+      expect((await app.request(`http://api.test/admin/${name}`, { headers: { cookie } })).status).toBe(404)
+    }
+  })
+
+  it('renders the notas shell: a pt-BR noscript line, a status line and a six-column table over an empty body', async () => {
+    const app = setup()
+    const { cookie } = await session(app)
+    const body = await (await app.request('http://api.test/admin', { headers: { cookie } })).text()
+    expect(body).toContain('<main id="notas">')
+    expect(body).toContain('<noscript><p>O painel precisa de JavaScript para mostrar as notas.</p></noscript>')
+    expect(body).toContain('<h2>Notas</h2>')
+    expect(body).toContain('<p id="notas-state" role="status"></p>')
+    expect(body).toContain('<tbody id="notas-body"></tbody>')
+    expect(body).toMatch(
+      /<th[^>]*>Competência<\/th>\s*<th[^>]*>Cliente<\/th>\s*<th[^>]*>Valor<\/th>\s*<th[^>]*>Número<\/th>\s*<th[^>]*>Situação<\/th>\s*<th[^>]*>PDF<\/th>/,
+    )
   })
 
   it('shows login and refusals as one narrow centered card', async () => {
@@ -444,6 +482,8 @@ describe('session cookie flags, expiry and edge cases', () => {
     const bodies = [
       await (await app.request('http://api.test/login')).text(),
       await (await app.request('http://api.test/admin', { headers: { cookie } })).text(),
+      await (await app.request('http://api.test/admin/panel.js', { headers: { cookie } })).text(),
+      await (await app.request('http://api.test/admin/format.js', { headers: { cookie } })).text(),
     ]
     for (const body of bodies) expect(body).not.toContain(TOKEN)
     expect(res.headers.get('set-cookie')).not.toContain(TOKEN)
