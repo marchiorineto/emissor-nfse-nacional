@@ -103,3 +103,122 @@ export const parseNotaHash = (hash) => new URLSearchParams(hash.replace(/^#/, ''
 
 /** The URL hash that opens a nota: '#nota=<id>', the id encoded by URLSearchParams so any character round-trips. */
 export const notaHash = (id) => `#${new URLSearchParams({ nota: id })}`
+
+const dateTime = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', dateStyle: 'short', timeStyle: 'short' })
+
+/** An instant as DD/MM/YYYY, HH:MM in America/Sao_Paulo; text that is not a date (issuedAt can be the government's own date text) comes back as given. */
+export const formatDateTime = (value) => (Number.isNaN(Date.parse(value)) ? value : dateTime.format(new Date(value)))
+
+/** The value only when it is a string starting with https://, otherwise undefined: the one test a foreign URL passes before it becomes a link. */
+export const httpsHref = (value) => (typeof value === 'string' && value.startsWith('https://') ? value : undefined)
+
+const foreignValue = new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+const EXPORT_MODES = { 1: 'Transfronteiriço', 2: 'Consumo no Brasil', 3: 'Presença comercial no exterior', 4: 'Movimento temporário de pessoas' }
+
+const NO_NIF_REASONS = { 1: 'Dispensado do NIF', 2: 'NIF não exigido' }
+
+/** The rows with a value: a row whose value is undefined, null or '' is left out. */
+const present = (rows) => rows.filter(([, value]) => value !== undefined && value !== null && value !== '')
+
+const resumoRows = (nota) =>
+  present([
+    ['Situação', statusLabel(nota.status)],
+    ['Número da NFS-e', nota.nfseNumber],
+    ['Número da DPS', String(nota.dpsNumber)],
+    ['Valor', formatBrl(nota.request.valueCents)],
+    ['Criada em', formatDateTime(nota.createdAt)],
+    ['Emitida em', nota.issuedAt ? formatDateTime(nota.issuedAt) : undefined],
+    ['Cancelada em', nota.canceledAt ? formatDateTime(nota.canceledAt) : undefined],
+    ['Identificador', nota.id],
+  ])
+
+const takerRows = (taker) => {
+  if (!taker) return [['Nome', '— (não informado)']]
+  const abroad = taker.abroad
+  const address = abroad?.address
+  const parts = address ? [address.street, address.number, address.complement, address.district, address.city, address.region, address.postalCode] : []
+  return present([
+    ['Nome', taker.name],
+    ['CPF/CNPJ', taker.taxId ? formatTaxId(taker.taxId) : undefined],
+    ['NIF', abroad?.nif],
+    ['Motivo sem NIF', abroad?.noNifReason ? (NO_NIF_REASONS[abroad.noNifReason] ?? abroad.noNifReason) : undefined],
+    ['País', address ? countryName(address.country) : undefined],
+    ['Endereço', parts.filter(Boolean).join(', ')],
+    ['E-mail', taker.email],
+    ['Telefone', taker.phone],
+  ])
+}
+
+const documentRows = (nota) => {
+  const lookup = httpsHref(nota.links?.lookup)
+  const pdf = pdfHref(nota)
+  return present([
+    ['Chave de acesso', nota.accessKey],
+    ['Consulta pública', lookup ? { text: 'Abrir na consulta pública', href: lookup, external: true } : undefined],
+    ['PDF', pdf ? { text: 'Baixar PDF', href: pdf, download: pdfFilename(nota) } : undefined],
+  ])
+}
+
+const exportRows = (data) =>
+  present([
+    ['País do resultado', countryName(data.resultCountry)],
+    ['Moeda (código BACEN)', data.currency],
+    ['Valor na moeda', foreignValue.format(data.foreignValueCents / 100)],
+    ['Modo', data.mode ? `${data.mode} ${EXPORT_MODES[data.mode] ?? ''}`.trim() : undefined],
+    ['Vínculo', data.relationship],
+    ['Apoio do emissor', data.issuerSupport],
+    ['Apoio do tomador', data.takerSupport],
+    ['Compartilhar com o MDIC', data.shareWithMdic ? 'Sim' : 'Não'],
+  ])
+
+const replacementRows = (nota) => {
+  const replaces = nota.request.replaces
+  const replaced = replaces?.id ? { text: replaces.id, href: notaHash(replaces.id) } : replaces?.accessKey
+  return present([
+    ['Substitui', replaced],
+    ['Motivo da substituição', replaces ? `${replaces.reasonCode}${replaces.reason ? ` – ${replaces.reason}` : ''}` : undefined],
+    ['Substituída por', nota.replacedBy ? { text: nota.replacedBy, href: notaHash(nota.replacedBy) } : undefined],
+  ])
+}
+
+/**
+ * The sections of the details dialog as plain data, always in the order Resumo, Tomador, Serviço, Documento, Exportação,
+ * Substituição and only with rows that have a value; a section without rows is left out. Values are plain strings or
+ * { text, href } links built here from #nota= hashes, the relative PDF path and an https URL.
+ */
+export const detailSections = (nota) => {
+  const request = nota.request
+  const sections = [
+    { title: 'Resumo', rows: resumoRows(nota) },
+    { title: 'Tomador', rows: takerRows(request.taker) },
+    {
+      title: 'Serviço',
+      rows: present([
+        ['Código do serviço', request.serviceCode],
+        ['Código NBS', request.nbsCode],
+        ['Descrição', request.description],
+        ['Competência', listDate(nota)],
+      ]),
+    },
+    { title: 'Documento', rows: documentRows(nota) },
+    { title: 'Exportação', rows: request.export ? exportRows(request.export) : [] },
+    { title: 'Substituição', rows: replacementRows(nota) },
+  ]
+  return sections.filter((section) => section.rows.length > 0)
+}
+
+/** The boxes of the government's errors: emission first, cancellation second, none for an absent or empty list; the errors are passed through untouched. */
+export const errorBoxes = (nota) =>
+  [
+    { heading: 'Erros na emissão', errors: nota.errors },
+    { heading: 'Erros no cancelamento', errors: nota.cancelErrors },
+  ].filter((box) => Array.isArray(box.errors) && box.errors.length > 0)
+
+/** The text-only notice of a status: no answer from the government, or a document that is no longer valid. Never an action. */
+export const statusNotice = (nota) => {
+  if (nota.status === 'pending' || nota.status === 'unknown') return 'O governo não respondeu. A nota será verificada quando o sistema de origem reenviar este id.'
+  if (nota.status === 'canceled') return 'Este documento não é mais válido: a nota foi cancelada.'
+  if (nota.status === 'replaced') return 'Este documento não é mais válido: a nota foi substituída.'
+  return undefined
+}
