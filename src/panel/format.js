@@ -76,6 +76,9 @@ export const listQuery = ({ status, last } = {}) => {
   return `/v1/notas?${params}`
 }
 
+/** Whether a page of this many notas may be followed by another: only a full page can (D-02). */
+export const hasMore = (count) => count >= PAGE_SIZE
+
 /** The status the URL's query string asks for when it is one of STATUS_ORDER, otherwise '' (Todas); a malformed value never throws. */
 export const parseStatus = (search) => {
   const status = new URLSearchParams(search).get('status')

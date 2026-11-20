@@ -57,12 +57,17 @@ const password = randomBytes(12).toString('hex')
 const hash = await hashPassword(password)
 const apiToken = randomBytes(16).toString('hex')
 
-/** Fixtures: 26 notas with strictly decreasing createdAt, index 0 the newest. The number shown on a row is 100 - index. */
+/**
+ * Fixtures: 45 notas, index 0 the newest. The number shown on a row is 100 - index. The 20th and 21st newest (index 19 and 20)
+ * share one createdAt, the case a page edge must not skip or repeat, and their ids sort so that index order is the list order
+ * (id descending breaks the tie). Notas from index 26 on are all issued, so the issued filter spans two pages (24 notas).
+ */
 const fixtures = () =>
-  Array.from({ length: 26 }, (_, i) => {
+  Array.from({ length: 45 }, (_, i) => {
+    const minute = i === 20 ? 40 : 59 - i
     const createdAt =
-      i < 5 ? `2026-11-20T0${9 - i}:00:00.000Z` : i === 5 ? '2026-11-20T02:30:00.000Z' : `2026-11-20T01:${String(59 - i).padStart(2, '0')}:00.000Z`
-    const status = ['issued', 'rejected', 'unknown', 'pending', 'canceled', 'replaced'][i % 6]
+      i < 5 ? `2026-11-20T0${9 - i}:00:00.000Z` : i === 5 ? '2026-11-20T02:30:00.000Z' : `2026-11-20T01:${String(minute).padStart(2, '0')}:00.000Z`
+    const status = i >= 26 ? 'issued' : ['issued', 'rejected', 'unknown', 'pending', 'canceled', 'replaced'][i % 6]
     const named = { name: `Cliente ${i}`, taxId: '11222333000181' }
     const takers = {
       0: named,
@@ -75,10 +80,10 @@ const fixtures = () =>
     const taker = i in takers ? takers[i] : named
     const issuedLike = status === 'issued' || status === 'canceled' || status === 'replaced'
     return {
-      id: `n${i}`,
+      id: `n${200 - i}`,
       status: i === 6 ? 'issued' : status,
       request: {
-        id: `n${i}`,
+        id: `n${200 - i}`,
         serviceCode: '080201',
         description: 'Aula',
         valueCents: 1000 + i * 137,
@@ -125,6 +130,12 @@ const scenario = async ({ notas = [], failList = false } = {}) => {
 
 const main = await scenario({ notas: fixtures() })
 const empty = await scenario()
+// Exactly one full page of issued notas: the "Carregar mais" click that returns an empty page, and a filter without matches.
+const exact = await scenario({
+  notas: fixtures()
+    .slice(0, 20)
+    .map((nota) => ({ ...nota, status: 'issued', accessKey: '4'.repeat(50), nfseNumber: String(nota.dpsNumber) })),
+})
 const failing = await scenario({ notas: fixtures(), failList: true })
 
 // (c) The real login: the cookie Chrome gets is the one the server issued.
@@ -415,6 +426,71 @@ await check('session-expired', async () => {
   } finally {
     await page('Network.setCookie', { name: 'nfse_admin', value: cookie, url: `${main.origin}/`, httpOnly: true, sameSite: 'Strict' })
   }
+})
+
+/** Clicks Carregar mais. */
+const clickMore = () => evaluate(`document.getElementById('more').click()`)
+
+/** The number each row shows, as a list of integers. */
+const rowNumbers = async () => (await rowTexts()).map((cells) => Number(/\d+/.exec(cells[3])?.[0]))
+
+await check('more-pages', async () => {
+  const all = fixtures()
+  const expected = all.map((_, i) => 100 - i)
+  await goto(`${main.origin}/admin`)
+  await waitFor(`document.querySelectorAll('#notas-body tr').length === 20`)
+  assert((await evaluate(`document.getElementById('more').hidden`)) === false, 'Carregar mais is hidden after a full first page')
+  await clickMore()
+  await waitFor(`document.querySelectorAll('#notas-body tr').length === 40`)
+  await clickMore()
+  await waitFor(`document.querySelectorAll('#notas-body tr').length === ${all.length} && document.getElementById('more').hidden`)
+  const numbers = await rowNumbers()
+  assert(new Set(numbers).size === numbers.length, `a nota appears twice: ${numbers.join(',')}`)
+  assert(numbers.join(',') === expected.join(','), `rows are not every nota once, newest first: ${numbers.join(',')}`)
+  const lists = v1Requests.filter((r) => r.url.pathname === '/v1/notas')
+  assert(lists.length === 3, `expected 3 list requests, saw ${lists.length}`)
+  for (const [n, edge] of [[1, all[19]], [2, all[39]]]) {
+    const { searchParams } = lists[n].url
+    assert(searchParams.get('limit') === '20', `request ${n + 1}: limit is "${searchParams.get('limit')}"`)
+    assert(searchParams.get('before') === edge.createdAt, `request ${n + 1}: before is "${searchParams.get('before')}", expected ${edge.createdAt}`)
+    assert(searchParams.get('beforeId') === edge.id, `request ${n + 1}: beforeId is "${searchParams.get('beforeId')}", expected ${edge.id}`)
+    assert(!searchParams.has('status'), `request ${n + 1} carries a status`)
+  }
+  assert(all[19].createdAt === all[20].createdAt, 'the fixtures lost the createdAt tie at the page edge')
+  assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
+
+  const issued = all.filter((nota) => nota.status === 'issued')
+  await goto(`${main.origin}/admin?status=issued`)
+  await waitFor(`document.querySelectorAll('#notas-body tr').length === 20`)
+  await clickMore()
+  await waitFor(`document.querySelectorAll('#notas-body tr').length === ${issued.length} && document.getElementById('more').hidden`)
+  assert((await rowStatuses()).every((status) => status === 'issued'), 'an appended row is not issued')
+  const issuedNumbers = await rowNumbers()
+  assert(issuedNumbers.join(',') === issued.map((nota) => nota.dpsNumber).join(','), `issued rows: ${issuedNumbers.join(',')}`)
+  const filtered = v1Requests.filter((r) => r.url.pathname === '/v1/notas')
+  assert(filtered.length === 2 && filtered.every((r) => r.url.searchParams.get('status') === 'issued'), 'a page request lost the status filter')
+  assert(filtered[1].url.searchParams.get('beforeId') === issued[19].id, `second page beforeId is "${filtered[1].url.searchParams.get('beforeId')}"`)
+})
+
+await check('more-exact-page', async () => {
+  await goto(`${exact.origin}/admin`)
+  await waitFor(`document.querySelectorAll('#notas-body tr').length === 20`)
+  assert((await evaluate(`document.getElementById('more').hidden`)) === false, 'Carregar mais is hidden after a full page')
+  await clickMore()
+  await waitFor(`document.getElementById('more').hidden`)
+  const rows = await evaluate(`document.querySelectorAll('#notas-body tr').length`)
+  assert(rows === 20, `${rows} rows after the empty page, expected 20`)
+  const line = await evaluate(`document.getElementById('notas-state').textContent`)
+  assert(line === '', `the status line says "${line}"`)
+  assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
+})
+
+await check('filter-empty', async () => {
+  await goto(`${exact.origin}/admin?status=rejected`)
+  await waitFor(`document.getElementById('notas-state').textContent === 'Nenhuma nota encontrada.'`)
+  assert((await evaluate(`document.querySelectorAll('#notas-body tr').length`)) === 0, 'rows shown for a filter without matches')
+  assert((await evaluate(`document.getElementById('more').hidden`)) === true, 'Carregar mais is visible for an empty list')
+  assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
 })
 
 const passed = results.filter(Boolean).length

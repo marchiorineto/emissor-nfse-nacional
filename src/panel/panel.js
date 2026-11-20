@@ -1,11 +1,12 @@
 // The panel's browser module: reads GET /v1/notas with the session cookie and renders the list.
 // Every API string reaches the DOM through textContent; nothing here ever parses markup or sets a style.
-import { formatBrl, isAlertStatus, listDate, listQuery, numberCell, parseStatus, statusLabel, statusSearch, takerCell } from './format.js'
+import { formatBrl, hasMore, isAlertStatus, listDate, listQuery, numberCell, parseStatus, statusLabel, statusSearch, takerCell } from './format.js'
 
 const body = document.getElementById('notas-body')
 const state = document.getElementById('notas-state')
 const table = body.closest('table')
 const select = document.getElementById('status')
+const more = document.getElementById('more')
 
 /** Fetches a /v1 path with the session cookie as the only credential; a 401 sends the browser to the login. */
 const api = async (path) => {
@@ -72,26 +73,40 @@ const say = (message) => {
   state.hidden = message === ''
 }
 
-/** What the list shows now: the status filter taken from the URL, and a counter that retires responses of older loads. */
-const view = { status: null, generation: 0 }
+/**
+ * What the list shows now: the status filter taken from the URL, the cursor after the last row shown, and a counter that
+ * retires responses of older loads (a filter change bumps it, so an in-flight page of the old filter is never appended).
+ */
+const view = { status: null, last: null, generation: 0 }
 
-/** Loads the first page of the current filter and replaces the rows with it; a response of an older load is dropped. */
-const loadFirstPage = async () => {
-  const generation = ++view.generation
-  say('Carregando notas…')
+/** Loads one page of the current filter: the newest one (replacing the rows) or, appending, the page after the last row shown. */
+const loadPage = async ({ append }) => {
+  const generation = view.generation + (append ? 0 : 1)
+  view.generation = generation
+  if (!append) {
+    view.last = null
+    body.replaceChildren()
+    more.hidden = true
+    say('Carregando notas…')
+  }
+  more.disabled = true
   table.setAttribute('aria-busy', 'true')
-  body.replaceChildren()
   try {
-    const { notas } = await api(listQuery({ status: view.status }))
+    const { notas } = await api(listQuery({ status: view.status, last: append ? view.last : undefined }))
     if (generation !== view.generation) return
     body.append(...notas.map(renderRow))
-    say(notas.length === 0 ? 'Nenhuma nota encontrada.' : '')
+    if (notas.length > 0) view.last = { createdAt: notas[notas.length - 1].createdAt, id: notas[notas.length - 1].id }
+    more.hidden = !hasMore(notas.length)
+    say(!append && notas.length === 0 ? 'Nenhuma nota encontrada.' : '')
   } catch (error) {
     if (generation !== view.generation) return
     if (error instanceof Error && error.message === 'unauthorized') return
     say('Não foi possível carregar as notas. Tente de novo.')
   } finally {
-    if (generation === view.generation) table.removeAttribute('aria-busy')
+    if (generation === view.generation) {
+      more.disabled = false
+      table.removeAttribute('aria-busy')
+    }
   }
 }
 
@@ -101,7 +116,7 @@ const sync = () => {
   if (status === view.status) return
   view.status = status
   select.value = status
-  loadFirstPage()
+  loadPage({ append: false })
 }
 
 select.addEventListener('change', () => {
@@ -109,5 +124,6 @@ select.addEventListener('change', () => {
   sync()
 })
 window.addEventListener('popstate', sync)
+more.addEventListener('click', () => loadPage({ append: true }))
 
 sync()
