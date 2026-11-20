@@ -365,6 +365,58 @@ await check('list-error', async () => {
   assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
 })
 
+/** The data-status of every row shown. */
+const rowStatuses = () => evaluate(`[...document.querySelectorAll('#notas-body tr')].map((tr) => tr.dataset.status)`)
+
+/** Waits until at least one row is shown and every row has the given status. */
+const waitForOnly = (status) =>
+  waitFor(`(() => { const rows = [...document.querySelectorAll('#notas-body tr')]; return rows.length > 0 && rows.every((tr) => tr.dataset.status === ${JSON.stringify(status)}) })()`)
+
+await check('filter-url', async () => {
+  await viewport(1280, false)
+  await goto(`${main.origin}/admin?status=rejected`)
+  await waitForOnly('rejected')
+  assert((await evaluate(`document.getElementById('status').value`)) === 'rejected', 'the select does not show rejected')
+  const request = v1Requests.find((r) => r.url.pathname === '/v1/notas')
+  assert(request?.url.searchParams.get('status') === 'rejected', `request status is "${request?.url.searchParams.get('status')}"`)
+  assert(request?.url.searchParams.get('limit') === '20', `request limit is "${request?.url.searchParams.get('limit')}"`)
+  await evaluate(`(() => { const select = document.getElementById('status'); select.value = 'issued'; select.dispatchEvent(new Event('change', { bubbles: true })) })()`)
+  await waitFor(`location.search === '?status=issued'`)
+  await waitForOnly('issued')
+  await evaluate('history.back()')
+  await waitFor(`location.search === '?status=rejected'`)
+  await waitForOnly('rejected')
+  assert((await evaluate(`document.getElementById('status').value`)) === 'rejected', 'Back left the select out of step with the URL')
+  await evaluate('window.__stale = true')
+  await page('Page.reload')
+  await waitFor(`document.readyState === 'complete' && !window.__stale`)
+  await waitForOnly('rejected')
+  assert((await evaluate('location.search')) === '?status=rejected', 'a reload lost the filter')
+  assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
+})
+
+await check('filter-invalid', async () => {
+  await goto(`${main.origin}/admin?status=bogus`)
+  await waitFor(`document.querySelectorAll('#notas-body tr').length > 0`)
+  assert((await evaluate(`document.getElementById('status').value`)) === '', 'the select does not show Todas for an unknown status')
+  assert(new Set(await rowStatuses()).size >= 2, 'an unknown status did not behave as Todas')
+  const request = v1Requests.find((r) => r.url.pathname === '/v1/notas')
+  assert(request && !request.url.searchParams.has('status'), 'the request carries a status parameter')
+  assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
+})
+
+await check('session-expired', async () => {
+  try {
+    await goto(`${main.origin}/admin`)
+    await waitFor(`document.querySelectorAll('#notas-body tr').length > 0`)
+    await page('Network.deleteCookies', { name: 'nfse_admin', url: `${main.origin}/` })
+    await evaluate(`(() => { const select = document.getElementById('status'); select.value = 'issued'; select.dispatchEvent(new Event('change', { bubbles: true })) })()`)
+    await waitFor(`location.pathname === '/login'`, 5000)
+  } finally {
+    await page('Network.setCookie', { name: 'nfse_admin', value: cookie, url: `${main.origin}/`, httpOnly: true, sameSite: 'Strict' })
+  }
+})
+
 const passed = results.filter(Boolean).length
 const failed = results.length - passed
 console.log(`panel-smoke: ${passed} passed, ${failed} failed`)

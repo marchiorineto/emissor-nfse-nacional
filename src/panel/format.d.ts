@@ -31,3 +31,7 @@ export function takerCell(taker?: Taker): { name: string; detail: string }
 export function numberCell(nota: Pick<NotaView, 'nfseNumber' | 'dpsNumber'>): { text: string; muted: boolean }
 /** The URL of one list page: limit first, then status and the cursor after the last row shown. */
 export function listQuery(options?: { status?: string; last?: Pick<NotaView, 'createdAt' | 'id'> }): string
+/** The status named by a query string when it is a known one, otherwise '' (Todas); never throws. */
+export function parseStatus(search: string): NotaStatus | ''
+/** The query string for a status filter: '' for Todas, otherwise '?status=<status>'. */
+export function statusSearch(status: string): string

@@ -5,6 +5,7 @@ import { deleteCookie, getCookie, setCookie } from 'hono/cookie'
 import { html } from 'hono/html'
 import type { HtmlEscapedString } from 'hono/utils/html'
 import type { Env } from './env.ts'
+import { STATUS_ORDER, statusLabel } from './panel/format.js'
 import { verifyPassword } from './password.ts'
 import {
   clientIp,
@@ -242,6 +243,11 @@ const adminPage = (cnpj: string, environment: string, csrf: string): Html =>
       <main id="notas">
         <noscript><p>O painel precisa de JavaScript para mostrar as notas.</p></noscript>
         <h2>Notas</h2>
+        <label for="status">Situação</label>
+        <select id="status" name="status">
+          <option value="">Todas</option>
+          ${STATUS_ORDER.map((status) => html`<option value="${status}">${statusLabel(status)}</option>`)}
+        </select>
         <p id="notas-state" role="status"></p>
         <table role="table">
           <thead>
@@ -256,6 +262,7 @@ const adminPage = (cnpj: string, environment: string, csrf: string): Html =>
           </thead>
           <tbody id="notas-body"></tbody>
         </table>
+        <button type="button" id="more" hidden>Carregar mais</button>
       </main>
       <script type="module" src="/admin/panel.js"></script>`,
     csrf,

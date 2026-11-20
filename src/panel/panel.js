@@ -1,10 +1,11 @@
 // The panel's browser module: reads GET /v1/notas with the session cookie and renders the list.
 // Every API string reaches the DOM through textContent; nothing here ever parses markup or sets a style.
-import { formatBrl, isAlertStatus, listDate, listQuery, numberCell, statusLabel, takerCell } from './format.js'
+import { formatBrl, isAlertStatus, listDate, listQuery, numberCell, parseStatus, statusLabel, statusSearch, takerCell } from './format.js'
 
 const body = document.getElementById('notas-body')
 const state = document.getElementById('notas-state')
 const table = body.closest('table')
+const select = document.getElementById('status')
 
 /** Fetches a /v1 path with the session cookie as the only credential; a 401 sends the browser to the login. */
 const api = async (path) => {
@@ -71,21 +72,42 @@ const say = (message) => {
   state.hidden = message === ''
 }
 
-/** Loads the newest page and replaces the rows with it. */
+/** What the list shows now: the status filter taken from the URL, and a counter that retires responses of older loads. */
+const view = { status: null, generation: 0 }
+
+/** Loads the first page of the current filter and replaces the rows with it; a response of an older load is dropped. */
 const loadFirstPage = async () => {
+  const generation = ++view.generation
   say('Carregando notas…')
   table.setAttribute('aria-busy', 'true')
   body.replaceChildren()
   try {
-    const { notas } = await api(listQuery())
+    const { notas } = await api(listQuery({ status: view.status }))
+    if (generation !== view.generation) return
     body.append(...notas.map(renderRow))
     say(notas.length === 0 ? 'Nenhuma nota encontrada.' : '')
   } catch (error) {
+    if (generation !== view.generation) return
     if (error instanceof Error && error.message === 'unauthorized') return
     say('Não foi possível carregar as notas. Tente de novo.')
   } finally {
-    table.removeAttribute('aria-busy')
+    if (generation === view.generation) table.removeAttribute('aria-busy')
   }
 }
 
-loadFirstPage()
+/** Brings the list in line with the URL, the one source of truth for the filter; does nothing when the filter is unchanged. */
+const sync = () => {
+  const status = parseStatus(location.search)
+  if (status === view.status) return
+  view.status = status
+  select.value = status
+  loadFirstPage()
+}
+
+select.addEventListener('change', () => {
+  history.pushState(null, '', location.pathname + statusSearch(select.value))
+  sync()
+})
+window.addEventListener('popstate', sync)
+
+sync()

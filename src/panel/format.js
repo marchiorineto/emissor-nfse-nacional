@@ -75,3 +75,12 @@ export const listQuery = ({ status, last } = {}) => {
   }
   return `/v1/notas?${params}`
 }
+
+/** The status the URL's query string asks for when it is one of STATUS_ORDER, otherwise '' (Todas); a malformed value never throws. */
+export const parseStatus = (search) => {
+  const status = new URLSearchParams(search).get('status')
+  return STATUS_ORDER.includes(status) ? status : ''
+}
+
+/** The query string that selects a status: '' for Todas, otherwise '?status=<status>'. */
+export const statusSearch = (status) => (status ? `?${new URLSearchParams({ status })}` : '')
