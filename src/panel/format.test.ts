@@ -3,24 +3,31 @@ import type { Taker } from '../dps.ts'
 import {
   brasiliaDay,
   countryName,
+  detailSections,
+  errorBoxes,
   formatBrl,
   formatCompetence,
+  formatDateTime,
   formatTaxId,
   hasMore,
+  httpsHref,
   isAlertStatus,
   listDate,
   listQuery,
+  notaHash,
   numberCell,
   PAGE_SIZE,
+  parseNotaHash,
   parseStatus,
   pdfFilename,
   pdfHref,
   STATUS_ORDER,
   statusLabel,
+  statusNotice,
   statusSearch,
   takerCell,
 } from './format.js'
-import type { NotaView } from './format.d.ts'
+import type { DetailSection, DetailValue, NotaView } from './format.d.ts'
 
 const NBSP = ' '
 
@@ -221,5 +228,232 @@ describe('pdfFilename', () => {
   it('names the file from the NFS-e number, else the DPS number', () => {
     expect(pdfFilename({ nfseNumber: '7', dpsNumber: 12 })).toBe('nfse-7.pdf')
     expect(pdfFilename({ dpsNumber: 12 })).toBe('nfse-12.pdf')
+  })
+})
+
+describe('formatDateTime', () => {
+  it('shows an instant in Brasília as dd/mm/aaaa, hh:mm', () => {
+    expect(formatDateTime('2026-11-20T15:30:00Z')).toBe('20/11/2026, 12:30')
+  })
+
+  it('returns text that is not a date as given, without throwing', () => {
+    expect(formatDateTime('not a date')).toBe('not a date')
+  })
+})
+
+describe('httpsHref', () => {
+  it('passes an https URL through', () => {
+    expect(httpsHref('https://www.nfse.gov.br/ConsultaPublica/?tpc=1&chave=1')).toBe('https://www.nfse.gov.br/ConsultaPublica/?tpc=1&chave=1')
+  })
+
+  it('refuses javascript:, http: and non-strings', () => {
+    expect(httpsHref('javascript:alert(1)')).toBeUndefined()
+    expect(httpsHref('http://x')).toBeUndefined()
+    expect(httpsHref(undefined)).toBeUndefined()
+    expect(httpsHref(42)).toBeUndefined()
+  })
+})
+
+describe('parseNotaHash and notaHash', () => {
+  it('reads the id out of the hash', () => {
+    expect(parseNotaHash('#nota=abc')).toBe('abc')
+    expect(parseNotaHash('')).toBe('')
+    expect(parseNotaHash('#other=1')).toBe('')
+  })
+
+  it('never throws on a malformed escape', () => {
+    expect(typeof parseNotaHash('#nota=%E0%A4%A')).toBe('string')
+  })
+
+  it('round-trips an id with spaces, #, ?, %, / and an emoji', () => {
+    const id = 'loja/1 #?%😀'
+    expect(parseNotaHash(notaHash(id))).toBe(id)
+  })
+})
+
+const issued = (overrides: Partial<NotaView> = {}) =>
+  nota({
+    nfseNumber: '77',
+    accessKey: 'K'.repeat(50),
+    issuedAt: '2026-11-20T15:30:00Z',
+    createdAt: '2026-11-20T14:00:00Z',
+    links: { lookup: 'https://www.nfse.gov.br/ConsultaPublica/?tpc=1&chave=KKK' },
+    ...overrides,
+    request: {
+      id: 'a',
+      serviceCode: '080201',
+      nbsCode: '123456789',
+      description: 'Aula de violão',
+      valueCents: 123456,
+      competence: '2026-11-19',
+      taker: { name: 'Acme Ltda', taxId: '11222333000181', email: 'a@acme.test', phone: '11999990000' },
+      ...overrides.request,
+    },
+  })
+
+/** A request whose parts are replaced by `extra`, for the cases that vary one thing. */
+const plain = (extra: Partial<NotaView['request']> = {}): NotaView['request'] => ({ id: 'a', serviceCode: '1', description: 'd', valueCents: 1, ...extra })
+
+const titles = (sections: DetailSection[]) => sections.map((section) => section.title)
+const rowsOf = (sections: DetailSection[], title: string): Record<string, DetailValue> =>
+  Object.fromEntries(sections.find((section) => section.title === title)?.rows ?? [])
+
+describe('detailSections', () => {
+  it('orders an issued nota with a CNPJ taker as Resumo, Tomador, Serviço, Documento', () => {
+    expect(titles(detailSections(issued()))).toEqual(['Resumo', 'Tomador', 'Serviço', 'Documento'])
+  })
+
+  it('appends Exportação, then Substituição last, only with their data', () => {
+    const exportData = { resultCountry: 'US', currency: '220', foreignValueCents: 5000 }
+    const withExport = issued({ request: plain({ export: exportData }) })
+    expect(titles(detailSections(withExport))).toEqual(['Resumo', 'Tomador', 'Serviço', 'Documento', 'Exportação'])
+    expect(titles(detailSections(issued({ replacedBy: 'b' })))).toEqual(['Resumo', 'Tomador', 'Serviço', 'Documento', 'Substituição'])
+    const both = issued({ replacedBy: 'b', request: plain({ export: exportData, replaces: { id: 'z', reasonCode: '01' } }) })
+    expect(titles(detailSections(both))).toEqual(['Resumo', 'Tomador', 'Serviço', 'Documento', 'Exportação', 'Substituição'])
+    expect(titles(detailSections(issued({ request: plain({ replaces: { id: 'z', reasonCode: '01' } }) })))).toContain('Substituição')
+  })
+
+  it('fills Resumo of an issued nota and omits Cancelada em', () => {
+    const resumo = rowsOf(detailSections(issued()), 'Resumo')
+    expect(resumo['Situação']).toBe('Emitida')
+    expect(resumo['Número da NFS-e']).toBe('77')
+    expect(resumo['Número da DPS']).toBe('12')
+    expect(resumo['Valor']).toBe(formatBrl(123456))
+    expect(resumo['Criada em']).toBe('20/11/2026, 11:00')
+    expect(resumo['Emitida em']).toBe('20/11/2026, 12:30')
+    expect(resumo['Identificador']).toBe('a')
+    expect('Cancelada em' in resumo).toBe(false)
+  })
+
+  it('shows Cancelada em only when canceledAt is set, and omits absent optional rows', () => {
+    const canceled = rowsOf(detailSections(issued({ status: 'canceled', canceledAt: '2026-11-21T15:30:00Z' })), 'Resumo')
+    expect(canceled['Cancelada em']).toBe('21/11/2026, 12:30')
+    const bare = rowsOf(detailSections(nota({ status: 'pending' })), 'Resumo')
+    expect(Object.keys(bare)).toEqual(['Situação', 'Número da DPS', 'Valor', 'Criada em', 'Identificador'])
+  })
+
+  it('shows a missing taker as one row, Nome — (não informado)', () => {
+    const sections = detailSections(nota())
+    expect(sections.find((section) => section.title === 'Tomador')?.rows).toEqual([['Nome', '— (não informado)']])
+  })
+
+  it('formats a CPF/CNPJ taker with e-mail and phone', () => {
+    const tomador = rowsOf(detailSections(issued()), 'Tomador')
+    expect(tomador['Nome']).toBe('Acme Ltda')
+    expect(tomador['CPF/CNPJ']).toBe('11.222.333/0001-81')
+    expect(tomador['E-mail']).toBe('a@acme.test')
+    expect(tomador['Telefone']).toBe('11999990000')
+  })
+
+  it('shows a taker abroad with NIF, country and the address parts present', () => {
+    const address = { country: 'US', postalCode: '10001', city: 'New York', region: 'NY', street: '5th Ave', number: '1' }
+    const abroad = issued({ request: plain({ taker: { name: 'Globex', abroad: { nif: 'US-1', address } } }) })
+    const tomador = rowsOf(detailSections(abroad), 'Tomador')
+    expect(tomador['NIF']).toBe('US-1')
+    expect(tomador['País']).toBe(countryName('US'))
+    expect(tomador['Endereço']).toBe('5th Ave, 1, New York, NY, 10001')
+    expect('CPF/CNPJ' in tomador).toBe(false)
+    const noNif = issued({ request: plain({ taker: { name: 'G', abroad: { noNifReason: '1' } } }) })
+    expect(rowsOf(detailSections(noNif), 'Tomador')['Motivo sem NIF']).toBe('Dispensado do NIF')
+    const notRequired = issued({ request: plain({ taker: { name: 'G', abroad: { noNifReason: '2' } } }) })
+    expect(rowsOf(detailSections(notRequired), 'Tomador')['Motivo sem NIF']).toBe('NIF não exigido')
+  })
+
+  it('fills Serviço with the code, NBS, description and competence', () => {
+    const servico = rowsOf(detailSections(issued()), 'Serviço')
+    expect(servico['Código do serviço']).toBe('080201')
+    expect(servico['Código NBS']).toBe('123456789')
+    expect(servico['Descrição']).toBe('Aula de violão')
+    expect(servico['Competência']).toBe('19/11/2026')
+  })
+
+  it('links Documento: access key, https lookup and the PDF download', () => {
+    const documento = rowsOf(detailSections(issued()), 'Documento')
+    expect(documento['Chave de acesso']).toBe('K'.repeat(50))
+    expect(documento['Consulta pública']).toEqual({ text: 'Abrir na consulta pública', href: 'https://www.nfse.gov.br/ConsultaPublica/?tpc=1&chave=KKK', external: true })
+    expect(documento['PDF']).toEqual({ text: 'Baixar PDF', href: pdfHref(issued()), download: 'nfse-77.pdf' })
+  })
+
+  it('has no PDF row without an access key, no lookup row for a non-https link, and no Documento section without rows', () => {
+    const noKey = detailSections(nota({ status: 'rejected' }))
+    expect(titles(noKey)).not.toContain('Documento')
+    const unsafe = rowsOf(detailSections(issued({ links: { lookup: 'javascript:alert(1)' } })), 'Documento')
+    expect('Consulta pública' in unsafe).toBe(false)
+  })
+
+  it('shows the export group', () => {
+    const exported = issued({
+      request: plain({
+        export: { resultCountry: 'US', currency: '220', foreignValueCents: 123456, mode: '2', relationship: '3', issuerSupport: '01', takerSupport: '02', shareWithMdic: true },
+      }),
+    })
+    const exportacao = rowsOf(detailSections(exported), 'Exportação')
+    expect(exportacao['País do resultado']).toBe(countryName('US'))
+    expect(exportacao['Moeda (código BACEN)']).toBe('220')
+    expect(exportacao['Valor na moeda']).toBe('1.234,56')
+    expect(exportacao['Modo']).toBe('2 Consumo no Brasil')
+    expect(exportacao['Vínculo']).toBe('3')
+    expect(exportacao['Apoio do emissor']).toBe('01')
+    expect(exportacao['Apoio do tomador']).toBe('02')
+    expect(exportacao['Compartilhar com o MDIC']).toBe('Sim')
+  })
+
+  it('links Substituição rows to #nota= hashes, or shows the bare access key', () => {
+    const both = issued({ replacedBy: 'novo/2', request: plain({ replaces: { id: 'velho 1', reasonCode: '99', reason: 'Valor errado na nota' } }) })
+    const substituicao = rowsOf(detailSections(both), 'Substituição')
+    expect(substituicao['Substitui']).toEqual({ text: 'velho 1', href: notaHash('velho 1') })
+    expect(substituicao['Motivo da substituição']).toBe('99 – Valor errado na nota')
+    expect(substituicao['Substituída por']).toEqual({ text: 'novo/2', href: notaHash('novo/2') })
+    const byKey = issued({ request: plain({ replaces: { accessKey: 'X'.repeat(50), reasonCode: '01' } }) })
+    expect(rowsOf(detailSections(byKey), 'Substituição')['Substitui']).toBe('X'.repeat(50))
+    expect(rowsOf(detailSections(byKey), 'Substituição')['Motivo da substituição']).toBe('01')
+  })
+
+  it('returns hostile text as the same plain strings', () => {
+    const hostile = '<img src=x onerror=alert(1)>'
+    const view = issued({ request: plain({ description: hostile, taker: { name: hostile, taxId: '11222333000181' } }) })
+    const sections = detailSections(view)
+    expect(rowsOf(sections, 'Tomador')['Nome']).toBe(hostile)
+    expect(rowsOf(sections, 'Serviço')['Descrição']).toBe(hostile)
+  })
+})
+
+describe('errorBoxes', () => {
+  const errors = [
+    { code: 'E0014', message: 'DPS duplicada', detail: 'já existe' },
+    { code: 'HTTP 403', message: '<img src=x onerror=alert(1)>' },
+  ]
+
+  it('gives one box for the emission errors, untouched and in order', () => {
+    expect(errorBoxes(nota({ status: 'rejected', errors }))).toEqual([{ heading: 'Erros na emissão', errors }])
+  })
+
+  it('gives emission first and cancellation second when both are present', () => {
+    const boxes = errorBoxes(nota({ errors, cancelErrors: [{ code: 'E9', message: 'm' }] }))
+    expect(boxes.map((box) => box.heading)).toEqual(['Erros na emissão', 'Erros no cancelamento'])
+    expect(boxes[1]?.errors).toEqual([{ code: 'E9', message: 'm' }])
+  })
+
+  it('gives no box for absent or empty lists', () => {
+    expect(errorBoxes(nota())).toEqual([])
+    expect(errorBoxes(nota({ errors: [], cancelErrors: [] }))).toEqual([])
+  })
+})
+
+describe('statusNotice', () => {
+  it('says the government did not answer for pending and unknown, without a retry', () => {
+    const text = 'O governo não respondeu. A nota será verificada quando o sistema de origem reenviar este id.'
+    expect(statusNotice(nota({ status: 'pending' }))).toBe(text)
+    expect(statusNotice(nota({ status: 'unknown' }))).toBe(text)
+  })
+
+  it('says a canceled or replaced document is no longer valid', () => {
+    expect(statusNotice(nota({ status: 'canceled' }))).toBe('Este documento não é mais válido: a nota foi cancelada.')
+    expect(statusNotice(nota({ status: 'replaced' }))).toBe('Este documento não é mais válido: a nota foi substituída.')
+  })
+
+  it('has no notice for issued and rejected', () => {
+    expect(statusNotice(nota({ status: 'issued' }))).toBeUndefined()
+    expect(statusNotice(nota({ status: 'rejected' }))).toBeUndefined()
   })
 })

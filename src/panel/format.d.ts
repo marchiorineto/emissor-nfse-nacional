@@ -1,6 +1,6 @@
 // Types of format.js, the panel's browser module. The folder has no allowJs, so tsc needs this file to accept typed imports.
 import type { Taker } from '../dps.ts'
-import type { Nota, NotaStatus } from '../notas.ts'
+import type { GovError, Nota, NotaStatus } from '../notas.ts'
 
 /** A nota as GET /v1/notas returns it: every field except the NFS-e XML, plus the public links of an issued nota. */
 export type NotaView = Omit<Nota, 'nfseXml'> & { links?: Record<string, string> }
@@ -45,3 +45,20 @@ export function pdfFilename(nota: Pick<NotaView, 'nfseNumber' | 'dpsNumber'>): s
 export function parseNotaHash(hash: string): string
 /** The URL hash that opens a nota: '#nota=<id>' with the id encoded. */
 export function notaHash(id: string): string
+
+/** A value of a detail row: plain text, or a link (a #nota= hash, the same-origin PDF path or an https URL) with its text. */
+export type DetailValue = string | { text: string; href: string; download?: string; external?: boolean }
+/** One titled block of the details dialog: label and value rows, in display order. */
+export type DetailSection = { title: string; rows: Array<[label: string, value: DetailValue]> }
+/** The government's errors of one operation under their heading; the errors are untouched. */
+export type ErrorBox = { heading: string; errors: GovError[] }
+/** A moment as DD/MM/YYYY, HH:MM in America/Sao_Paulo; text that is not a date comes back as given. */
+export function formatDateTime(value: string): string
+/** The value only when it is a string starting with https://, otherwise undefined. */
+export function httpsHref(value: unknown): string | undefined
+/** The sections of the details dialog, in the fixed order Resumo, Tomador, Serviço, Documento, Exportação, Substituição. */
+export function detailSections(nota: NotaView): DetailSection[]
+/** The error boxes of the dialog: emission first, then cancellation; none for an absent or empty list. */
+export function errorBoxes(nota: NotaView): ErrorBox[]
+/** The text-only notice of a status (no answer, canceled, replaced), or undefined. */
+export function statusNotice(nota: NotaView): string | undefined
