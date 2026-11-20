@@ -13,8 +13,8 @@ created: "2026-11-20"
 # Phase 01 — Security
 
 > Per-phase security contract: threat register, accepted risks, and audit trail.
-> Register taken from the `<threat_model>` blocks of 01-01..01-04-PLAN.md; no extra threat flags in the SUMMARY files.
-> Verified at ASVS L1 depth: the code was searched for each mitigation, and the full test suite passed (191 passed, 1 skipped).
+> Register taken from the `<threat_model>` blocks of 01-01..01-05-PLAN.md; no extra threat flags in the SUMMARY files (01-05-SUMMARY: "None").
+> Verified at ASVS L1 depth: the code was searched for each mitigation, and the full test suite passed (191 passed, 1 skipped; after gap-closure plan 01-05, 197 passed, 1 skipped).
 
 ---
 
@@ -29,7 +29,8 @@ created: "2026-11-20"
 | browser cookie → server | `nfse_admin` value is attacker-controllable | session token |
 | server HTML → browser | Pages must not carry secrets or unescaped values | CNPJ, environment, CSRF token |
 | reverse proxy → server | X-Forwarded-For / -Proto / -Host | client address, scheme |
-| CDN (jsDelivr) → browser | Serves Pico.css | stylesheet |
+| CDN (jsDelivr) → browser | Serves Pico.css (classless build since 01-05) | stylesheet |
+| internet client → POST /login, POST /logout refusals | Untrusted, possibly cross-site; answered with HTML refusal pages since 01-05 | fixed strings only |
 | browser (cookie) → /v1 and /health | Second credential reaches the API | session + CSRF token |
 | external system (Bearer) → /v1 | Must behave exactly as before | API_TOKEN |
 | operator → README / startup log | Guidance on restart and misconfiguration | operational guidance |
@@ -71,7 +72,11 @@ created: "2026-11-20"
 | T-01-29 | Elevation of privilege | session reach equal to token | low | accept | D-18: session has same reach as Bearer by design; single-admin panel | closed |
 | T-01-30 | Repudiation / Spoofing | operator believes sessions ended without restart | medium | mitigate | Script prints restart message; README "Criar ou trocar a senha" section; `adminPanelNotice` at startup | closed |
 | T-01-31 | Tampering | malformed ADMIN_PASSWORD | medium | mitigate | verifyPassword returns false on unparseable hash; `adminPanelNotice` warns `ADMIN_PASSWORD is not a valid hash` | closed |
-| T-01-SC | Tampering | npm/pip/cargo installs | low | accept | No package installed in any plan (RESEARCH Package Legitimacy Audit) | closed |
+| T-01-32 | Tampering | classless Pico.css from jsDelivr | medium | mitigate | `PICO_CSS_URL` pins `@picocss/pico@2.1.1/css/pico.classless.min.css`; `PICO_CSS_INTEGRITY` sha384 recomputed from jsDelivr at audit time and matches exactly; `crossorigin="anonymous"` (jsDelivr sends `access-control-allow-origin: *`); `PAGE_CSP` pinned by test (src/admin.ts:25-34, src/admin.test.ts) | closed |
+| T-01-33 | Tampering | HTML refusal pages (XSS) | low | mitigate | `refusalPage` takes only literal headings and an href typed `'/login' \| '/admin'` (src/admin.ts:127, 183-184, 228); rendered through escaping `html`; CSP `default-src 'none'`; test asserts no `<script`, class or style attribute on every page incl. refusals | closed |
+| T-01-34 | Information disclosure | login error markup | low | mitigate | Error `<small>` carries only fixed text ("Senha incorreta.", wait message); password input has no `value` (test `not.toMatch(/<input[^>]*\svalue=/)`) | closed |
+| T-01-35 | Denial of service | CDN unavailable | low | accept | D-12: pages fall back to unstyled but usable semantic HTML; see AR-01-06 | closed |
+| T-01-SC | Tampering | npm/pip/cargo installs | low | accept | No package installed in any plan, 01-05 included (RESEARCH Package Legitimacy Audit) | closed |
 
 *Status: open · closed · open — below high threshold (non-blocking)*
 *Severity: critical > high > medium > low — only open threats at or above workflow.security_block_on count toward threats_open*
@@ -87,6 +92,7 @@ created: "2026-11-20"
 | AR-01-02 | T-01-18 | Locked decision D-09: no TRUST_PROXY setting, so with no proxy in front a client can rotate a fake X-Forwarded-For to dodge the delay. The 12-character minimum plus scrypt keep guessing impractical. | user decision D-09 (CONTEXT.md) | 2026-11-20 |
 | AR-01-03 | T-01-29 | Decision D-18: the admin session has the same API reach as the Bearer token; the panel is single-admin. | user decision D-18 (CONTEXT.md) | 2026-11-20 |
 | AR-01-04 | T-01-SC | No third-party package was installed in this phase; nothing to gate. | plan-time disposition | 2026-11-20 |
+| AR-01-06 | T-01-35 | Decision D-12: the stylesheet is loaded from jsDelivr, not vendored; if the CDN is down or the SRI check fails, pages render as unstyled but usable semantic HTML (nav, form, refusal links stay readable). | plan-time disposition (01-05-PLAN, D-12) | 2026-11-20 |
 | AR-01-05 | T-01-20 (residual) | Decision D-08: no global login cap, since one would let an attacker lock the admin out; floods with a fresh forged address per request are bounded only by the libuv pool. | user decision D-08 (CONTEXT.md) | 2026-11-20 |
 
 *Accepted risks do not resurface in future audit runs.*
@@ -98,6 +104,7 @@ created: "2026-11-20"
 | Audit Date | Threats Total | Closed | Open | Run By |
 |------------|---------------|--------|------|--------|
 | 2026-11-20 | 32 | 32 | 0 | gsd-secure-phase (orchestrator, ASVS L1 grep check; auditor skipped per short-circuit rule) |
+| 2026-11-20 | 36 | 36 | 0 | gsd-secure-phase re-run after gap-closure plan 01-05 (T-01-32..35 added; ASVS L1 grep check plus SRI recompute; auditor skipped per short-circuit rule) |
 
 ---
 
@@ -109,3 +116,11 @@ created: "2026-11-20"
 - [x] `status: verified` set in frontmatter
 
 **Approval:** verified 2026-11-20
+
+## Security Audit 2026-11-20
+
+| Metric | Count |
+|---|---|
+| Threats found | 36 |
+| Closed | 36 |
+| Open | 0 |
