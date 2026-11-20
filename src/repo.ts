@@ -74,7 +74,10 @@ export const createSqliteRepo = (db: DatabaseSync): Repo => {
   }
 }
 
-/** In-memory Repo for tests. */
+/**
+ * In-memory Repo for tests. Its list mirrors the SQLite ordering (createdAt then id, descending; ids compared by UTF-8
+ * bytes like SQLite's BINARY collation) and the before/beforeId cursor, so route tests of paging are meaningful.
+ */
 export const createMemoryRepo = (): Repo & { notas: Map<string, Nota>; setCounter(value: number): void } => {
   const notas = new Map<string, Nota>()
   let counter = 0
@@ -88,6 +91,18 @@ export const createMemoryRepo = (): Repo & { notas: Map<string, Nota>; setCounte
       notas.set(nota.id, structuredClone(nota))
     },
     nextNumber: async () => ++counter,
-    list: async ({ status, limit }) => [...notas.values()].filter((nota) => !status || nota.status === status).slice(0, limit),
+    list: async ({ status, limit, before, beforeId }) => {
+      const byId = (a: Nota, b: Nota) => Buffer.compare(Buffer.from(a.id), Buffer.from(b.id))
+      const isOlder = (nota: Nota) => {
+        if (!before) return true
+        if (!beforeId) return nota.createdAt < before
+        return nota.createdAt < before || (nota.createdAt === before && Buffer.compare(Buffer.from(nota.id), Buffer.from(beforeId)) < 0)
+      }
+      return [...notas.values()]
+        .filter((nota) => (!status || nota.status === status) && isOlder(nota))
+        .sort((a, b) => (a.createdAt === b.createdAt ? byId(b, a) : a.createdAt < b.createdAt ? 1 : -1))
+        .slice(0, limit)
+        .map((nota) => structuredClone(nota))
+    },
   }
 }

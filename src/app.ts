@@ -23,6 +23,7 @@ export interface AppDeps {
 
 const NOTA_STATUSES: readonly NotaStatus[] = ['pending', 'unknown', 'issued', 'rejected', 'canceled', 'replaced']
 const MAX_LIST = 100
+const DEFAULT_LIST = 50
 const STATUS_CODE: Record<NotaStatus, 200 | 202 | 422> = { issued: 200, canceled: 200, replaced: 200, rejected: 422, pending: 202, unknown: 202 }
 
 /**
@@ -33,6 +34,16 @@ export const adminPanelNotice = (env: Env): { warn: boolean; message: string } =
   if (!env.ADMIN_PASSWORD) return { warn: false, message: 'nfse: admin panel off (ADMIN_PASSWORD is empty); run pnpm run admin-password to turn it on' }
   if (!parseHash(env.ADMIN_PASSWORD)) return { warn: true, message: 'nfse: ADMIN_PASSWORD is not a valid hash; every login will fail. Run pnpm run admin-password and restart' }
   return { warn: false, message: 'nfse: admin panel on /admin' }
+}
+
+/**
+ * `listLimit(value)` is the page size of GET /v1/notas: the integer part of `value`, at most MAX_LIST; DEFAULT_LIST when it is absent, empty,
+ * zero, negative or not a number. Closes the CONCERNS.md issue where a negative limit disabled the cap (SQLite treats a
+ * negative LIMIT as none); valid values keep their meaning (D-04).
+ */
+const listLimit = (value: string | undefined): number => {
+  const limit = Math.trunc(Number(value))
+  return limit >= 1 ? Math.min(limit, MAX_LIST) : DEFAULT_LIST
 }
 
 export const createApp = ({ env, repo, gov, certificate, now = Date.now }: AppDeps): Hono => {
@@ -127,7 +138,7 @@ export const createApp = ({ env, repo, gov, certificate, now = Date.now }: AppDe
   app.get('/v1/notas', async (c) => {
     const status = c.req.query('status') as NotaStatus | undefined
     if (status && !NOTA_STATUSES.includes(status)) return c.json({ error: `status: one of ${NOTA_STATUSES.join(', ')}` }, 400)
-    const limit = Math.min(Number(c.req.query('limit') ?? 50) || 50, MAX_LIST)
+    const limit = listLimit(c.req.query('limit'))
     const list = await notas().list({ status, limit, before: c.req.query('before'), beforeId: c.req.query('beforeId') })
     const origin = originOf(c.req.url)
     return c.json({ notas: list.map((nota) => view(origin, nota)) })
