@@ -55,6 +55,8 @@ export const THROTTLE_RESET_MS = 10 * 60 * 1000
 export const THROTTLE_MAX_ENTRIES = 10_000
 
 const ADDRESS_MAX_LENGTH = 64
+const PRUNE_MIN_ENTRIES = 100
+const PRUNE_INTERVAL_MS = 60_000
 
 interface ThrottleEntry {
   failures: number
@@ -80,17 +82,35 @@ export interface LoginThrottle {
 export const createLoginThrottle = ({ now }: { now: () => number }): LoginThrottle => {
   const entries = new Map<string, ThrottleEntry>()
   const keyOf = (ip: string) => ip.slice(0, ADDRESS_MAX_LENGTH)
+  let lastPruneAt = Number.NEGATIVE_INFINITY
+
+  // At most once per minute of clock time, so an attack with many addresses cannot turn every login into a full scan.
+  const prune = (at: number) => {
+    if (entries.size <= PRUNE_MIN_ENTRIES || at - lastPruneAt < PRUNE_INTERVAL_MS) return
+    for (const [key, entry] of entries) {
+      if (!entry.inFlight && entry.blockedUntil <= at && at - entry.lastFailureAt > THROTTLE_RESET_MS) entries.delete(key)
+    }
+    lastPruneAt = at
+  }
 
   return {
     // The check and the in-flight mark run with no await between them, so two concurrent posts cannot both pass.
     begin(ip) {
       const key = keyOf(ip)
       const at = now()
+      prune(at)
       const entry = entries.get(key)
       if (entry?.inFlight) return 1
       if (entry && entry.blockedUntil > at) return Math.ceil((entry.blockedUntil - at) / 1000)
-      if (entry) entry.inFlight = true
-      else entries.set(key, { failures: 0, blockedUntil: 0, lastFailureAt: 0, inFlight: true })
+      if (entry) {
+        entry.inFlight = true
+        return 0
+      }
+      if (entries.size >= THROTTLE_MAX_ENTRIES) {
+        const oldest = entries.keys().next().value
+        if (oldest !== undefined) entries.delete(oldest)
+      }
+      entries.set(key, { failures: 0, blockedUntil: 0, lastFailureAt: 0, inFlight: true })
       return 0
     },
     end(ip, ok) {
