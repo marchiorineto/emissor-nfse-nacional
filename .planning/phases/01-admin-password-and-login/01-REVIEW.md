@@ -1,117 +1,83 @@
 ---
 phase: 01-admin-password-and-login
-reviewed: 2026-11-20T21:10:00Z
+reviewed: 2026-11-20T21:50:00Z
 depth: standard
 files_reviewed: 2
 files_reviewed_list:
-  - src/admin.test.ts
   - src/admin.ts
+  - src/admin.test.ts
 findings:
   critical: 0
   warning: 1
-  info: 4
-  total: 5
+  info: 2
+  total: 3
   necessity: 0
 status: issues_found
 ---
 
-# Phase 01: Code Review Report
+# Phase 01: Code Review Report (change 62c8cce, G-01-4 centered card)
 
-**Reviewed:** 2026-11-20T21:10:00Z
+**Reviewed:** 2026-11-20T21:50:00Z
 **Depth:** standard
 **Files Reviewed:** 2
 **Status:** issues_found
 
 ## Summary
 
-This is an incremental review of gap-closure plan 01-05. It covers what changed since the previous review (commit
-`0081b45`). The evaluation-scope resolver returned status `resolved`, source `task-commits`, with 5 task commits, and
-the scope is `src/admin.ts` and `src/admin.test.ts`. Nothing was outside the union and nothing was unreachable. Both
-files were read in full, and `src/admin.test.ts` was run (31 tests pass).
+Scope: the diff from 549fa34 to HEAD in `src/admin.ts` and `src/admin.test.ts`. That covers the same-origin `/panel.css` route behind `pageHeaders`, `style-src 'self'` in `PAGE_CSP`, and the login and refusal pages wrapped in `<main data-card><article>`. No `CLAUDE.md` exists in the repo and no project skills were consulted. Fallow structural findings were not supplied. The necessity lens was not applied: the standard-depth reference file was not read for this focused re-review, so no `necessity:` findings are claimed beyond `0`.
 
-Plan 01-05 adds the following, and all of it is sound:
+I found no correctness or security defects in the change. `src/admin.test.ts` passes: 33 of 33 tests.
 
-- **Pico classless with SRI.** The pinned 2.1.1 classless file was fetched from jsDelivr and hashed locally, and its
-  SHA-384 matches `PICO_CSS_INTEGRITY` exactly. jsDelivr answers with `access-control-allow-origin: *`, so
-  `crossorigin="anonymous"` with SRI works. The CSP `style-src https://cdn.jsdelivr.net` still covers the stylesheet,
-  and no inline style or class attribute was added (a test now checks this on every page).
-- **Environment badges.** The classless build defines `[data-theme=light]` and `[data-theme=dark]` scopes that can be
-  set on any element, and `mark` reads `--pico-mark-background-color` and `--pico-mark-color` from them. So the light
-  badge (amber, dark text) and the dark badge (`#014063`, white text) differ in both OS color schemes.
-  `NFSE_ENVIRONMENT` is free text in `env.ts`, but `config.ts:25` refuses any value other than `production` or
-  `restricted` before an emission, so a misspelled production value cannot emit under the light badge.
-- **Invalid-field login error.** `aria-describedby` is set whenever there is an error, and `aria-invalid` only on a
-  wrong password, not on the 429 notice. The password input never carries a `value`.
-- **HTML refusal pages.** 403 (cross-site), 413 (body limit) and 403 (logout CSRF) now render `refusalPage`. It takes
-  only fixed strings and a link typed as `'/login' | '/admin'`, so no request data is echoed. `pageHeaders` still
-  applies to these refusals, including the `bodyLimit` `onError` path, and tests now cover that.
+- **Route and headers:**
+  - `app.use('/panel.css', pageHeaders)` is registered before the GET handler, so the CSS response gets CSP, no-store, no-referrer and nosniff.
+  - `Content-Type: text/css; charset=utf-8` together with nosniff is correct for a stylesheet.
+  - With the panel off the route does not exist, and the existing 404 test now covers it.
+- **CSP widening:**
+  - `style-src 'self'` trusts only same-origin stylesheets.
+  - There is no HTML-injection sink in the panel: `html` escapes every interpolation, and only fixed strings reach `refusalPage`.
+  - The only same-origin CSS is the static `PANEL_CSS` constant, which has no interpolation.
+  - The widening is therefore not exploitable today.
+- **Pico interplay:**
+  - The `main[data-card]` selectors have specificity (0,1,1), which beats Pico's `body > main` at (0,0,2), so the overrides apply.
+  - The admin page uses a plain `<main id="notas">`, so it is unaffected.
+- **Markup:** `<main data-card>` adds no `class` or `style` attribute, so the existing no-class and no-style assertions still hold.
 
-There are no new Critical or Warning findings. WR-01 from the previous review still applies: the 4 KiB login body
-limit now sits at `src/admin.ts:183` and is unchanged, so it is carried forward and was re-verified. IN-01 to IN-03
-concern files outside this incremental scope (`src/password.ts`, `src/session.ts`, `scripts/admin-password.mjs`).
-Those files are unchanged since the previous review, so the findings are carried forward as they were, with the same
-IDs, and were not re-reviewed. IN-04 is new: a test-clarity issue.
-
-Necessity was assessed using `.claude/gsd-core/references/necessity-review.md`. There are no necessity findings. The
-`environmentLabel` fallback (any other value is shown as given) sits on a trust boundary (the environment), so it is
-not an impossible-state guard.
-
-## Narrative Findings (AI reviewer)
+The remaining items are test-strength and asset-delivery quality issues.
 
 ## Warnings
 
-### WR-01: Login body limit rejects passwords that the password policy accepts (carried forward, re-verified)
+### WR-01: /panel.css test claims "the panel headers" but asserts only nosniff
 
-**File:** `src/admin.ts:183`
-**Issue:** `POST /login` caps the body at 4 KiB, while `validatePassword` (`src/password.ts:35-41`) and the
-`admin-password` script accept up to 1024 code points. Browsers send the form as `application/x-www-form-urlencoded`,
-so each non-ASCII code point grows to 6-12 bytes. Any password of about 680 or more accented code points, or about 340
-or more emoji, gets 413. The admin can set that password but can never log in with it. Plan 01-05 turned the 413 into
-an HTML page ("Pedido grande demais" with a link back to the login), but the page still says nothing about the
-password's length, so the admin has no hint of the cause.
-**Fix:** Derive the limit from the policy, for example `MAX_PASSWORD_LENGTH * 12 + 256`. Another option is to bound the
-password in UTF-8 bytes so that the largest valid password always fits once encoded. Add a test that logs in with a
-maximum-length password made of multi-byte characters.
+**File:** `src/admin.test.ts:379-385`
+**Issue:** The test "serves /panel.css from this origin as text/css with the panel headers" checks status, content-type, `x-content-type-options` and the body. It never checks `Cache-Control`, `Content-Security-Policy` or `Referrer-Policy` on the stylesheet response. The `expectHeaders` helper in the same `describe` block (line 315) already asserts all four headers but is not used for this route. If `app.use('/panel.css', pageHeaders)` were narrowed or its header set changed, this test would still pass. The "headers on every panel response" guarantee that the earlier tests enforce for the HTML routes is therefore unenforced for the one new route. The title overstates what is verified.
+**Fix:**
+```ts
+const res = await setup().request('http://api.test/panel.css')
+expect(res.status).toBe(200)
+expect(res.headers.get('content-type')).toBe('text/css; charset=utf-8')
+expectHeaders(res)
+expect(await res.text()).toBe(PANEL_CSS)
+```
 
 ## Info
 
-### IN-01: parseHash accepts scrypt parameters whose memory exceeds SCRYPT_MAXMEM (carried forward, not re-reviewed)
+### IN-01: Card test checks CSS source text and only two of the pages that now use the card
 
-**File:** `src/password.ts:55-58`
-**Issue:** `parseHash` accepts N up to 2^20 and r up to 16, but `128·N·r` can exceed the 256 MiB `maxmem`. With such a
-hash, the panel notice says the panel is on, yet every login fails. Only a hand-edited hash can have these parameters.
-**Fix:** Reject any hash with `128 * N * r > SCRYPT_MAXMEM` in `parseHash`.
+**File:** `src/admin.test.ts:388-395`
+**Issue:**
+- The test matches regexes against the `PANEL_CSS` source string, for example `/main\[data-card\] \{[^}]*place-items: center/`. A harmless reformat (property order, a comment containing `}`, a split selector) breaks it, and it proves nothing about rendering. This is acceptable for a no-browser test setup, but it is brittle.
+- Markup coverage is only `/login` and the cross-site 403 refusal. The 401 and 429 re-renders of `loginPage`, the 413 refusal and the logout-CSRF 403 refusal also use the card. The 413 and logout cases are only checked for headers and text elsewhere. A regression that reverted `refusalPage` for those branches would go unnoticed.
 
-### IN-02: Throttle cap evicts by insertion order, including in-flight or blocked entries (carried forward, not re-reviewed)
+**Fix:** Loop the `<main data-card>` assertion over all card-rendering responses, namely the 401 login (`login(app, 'wrong password 12')`), the 413 refusal and the logout 403 refusal (`logout(app, { cookie }, 'wrong')`). Optionally assert the presence of the `main[data-card]` selector rather than exact property text.
 
-**File:** `src/session.ts:109-112`
-**Issue:** When the map is full, the oldest inserted key is evicted, even if it is in flight or blocked. The address
-then loses its delay and its single-attempt guarantee. Exploiting this needs 10,000 or more distinct addresses within
-the prune window.
-**Fix:** Prefer to evict entries that are idle and unblocked, or refresh an entry's position on each failure (LRU).
+### IN-02: Static stylesheet is served `Cache-Control: no-store`
 
-### IN-03: admin-password rewrites .env in place, not atomically (carried forward, not re-reviewed)
-
-**File:** `scripts/admin-password.mjs:86-87`
-**Issue:** `writeFileSync` truncates `.env`, which also holds the certificate and API secrets, and then rewrites it. If
-the write is interrupted, the file can be left truncated.
-**Fix:** Write `.env.tmp` with mode `0o600`, then `renameSync` it over `.env`.
-
-### IN-04: The page-wide markup test's "correct password" entry is really a 429 page
-
-**File:** `src/admin.test.ts:358-359`
-**Issue:** The `bodies` list in "allows only Pico from jsDelivr ... on every page" posts a wrong password and then the
-correct password from `198.51.100.30`. A successful login is a 303 with an empty body, so `toContain('<html')` passes
-only because the earlier failure blocks the address and the second post gets the 429 login page. The test does not
-assert the status. The 429 page is covered only by coincidence, and the line reads as if it covered the success path.
-If the throttle stops blocking after the first failure (or a later test resets state), this entry becomes a 303. The
-test would then fail with a confusing `<html` assertion, or, if the assertion is relaxed, the 429 page would silently
-drop out of the markup check.
-**Fix:** Make the intent explicit. Assert the status (`expect(res.status).toBe(429)`), or generate the 429 page
-directly, with a comment that it is the throttle notice.
+**File:** `src/admin.ts:202-209, 220-222`
+**Issue:** `/panel.css` is routed through `pageHeaders`, so the browser refetches an unchanging, secret-free constant on every page view. This is consistent with the existing "every panel response is no-store" rule and with the test, so it is not a bug. It does mean the deliberate blanket policy now covers an asset that carries no session data, so the behavior is worth a conscious decision. Without a cache header the page also briefly renders unstyled while the stylesheet reloads on each navigation, for example login to /admin and back. The quick fix is to give the CSS route a short `Cache-Control: public, max-age=300` instead of no-store, and to relax `expectHeaders` for that route. Keeping no-store is also defensible. Treat this as a judgment call, not a defect.
+**Fix:** Either keep as is and note the decision in the `pageHeaders` doc comment, or serve `/panel.css` with its own cache header and drop it from `app.use('/panel.css', pageHeaders)` while still setting CSP, nosniff and Referrer-Policy.
 
 ---
 
-_Reviewed: 2026-11-20T21:10:00Z_
+_Reviewed: 2026-11-20T21:50:00Z_
 _Reviewer: Claude (gsd-code-reviewer)_
 _Depth: standard_
