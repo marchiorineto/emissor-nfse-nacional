@@ -13,6 +13,7 @@
     "start": "node --openssl-legacy-provider --disable-warning=ExperimentalWarning --env-file-if-exists=.env src/server.ts",
     "dev": "node --openssl-legacy-provider --disable-warning=ExperimentalWarning --env-file-if-exists=.env --watch src/server.ts",
     "certificate": "node --openssl-legacy-provider --disable-warning=ExperimentalWarning --env-file-if-exists=.env scripts/certificate.mjs",
+    "admin-password": "node --openssl-legacy-provider --disable-warning=ExperimentalWarning --env-file-if-exists=.env scripts/admin-password.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
