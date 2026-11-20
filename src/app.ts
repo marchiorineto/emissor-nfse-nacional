@@ -8,6 +8,7 @@ import { publicLookupUrl } from './danfse.ts'
 import type { Env } from './env.ts'
 import type { Certificate } from './gov.ts'
 import { createNotas, isNotaError, type Gov, type Nota, type NotaStatus, type Repo } from './notas.ts'
+import { parseHash } from './password.ts'
 import { parseIssueRequest } from './request.ts'
 import { SESSION_COOKIE, csrfToken, readSession, sessionKey, timingSafeEqual } from './session.ts'
 
@@ -23,6 +24,16 @@ export interface AppDeps {
 const NOTA_STATUSES: readonly NotaStatus[] = ['pending', 'unknown', 'issued', 'rejected', 'canceled', 'replaced']
 const MAX_LIST = 100
 const STATUS_CODE: Record<NotaStatus, 200 | 202 | 422> = { issued: 200, canceled: 200, replaced: 200, rejected: 422, pending: 202, unknown: 202 }
+
+/**
+ * The startup log line about the admin panel: off (ADMIN_PASSWORD empty), misconfigured (a value that is not a valid
+ * hash, so every login fails closed; a warning) or on. It never includes the value itself.
+ */
+export const adminPanelNotice = (env: Env): { warn: boolean; message: string } => {
+  if (!env.ADMIN_PASSWORD) return { warn: false, message: 'nfse: admin panel off (ADMIN_PASSWORD is empty); run pnpm run admin-password to turn it on' }
+  if (!parseHash(env.ADMIN_PASSWORD)) return { warn: true, message: 'nfse: ADMIN_PASSWORD is not a valid hash; every login will fail. Run pnpm run admin-password and restart' }
+  return { warn: false, message: 'nfse: admin panel on /admin' }
+}
 
 export const createApp = ({ env, repo, gov, certificate, now = Date.now }: AppDeps): Hono => {
   const notas = () => createNotas({ repo, gov, config: configFrom(env) })
