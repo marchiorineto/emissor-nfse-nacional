@@ -1,6 +1,6 @@
 // Entry point: `pnpm start`, which also loads .env (see package.json).
 import { serve } from '@hono/node-server'
-import { createApp } from './app.ts'
+import { adminPanelNotice, createApp } from './app.ts'
 import { configProblems } from './config.ts'
 import { envFrom } from './env.ts'
 import { createCertificateSource, createGov } from './gov.ts'
@@ -14,6 +14,9 @@ const app = createApp({ env, repo: createSqliteRepo(db), gov: createGov(certific
 // The server starts even when something is missing, so GET /health can say what.
 for (const problem of configProblems(env)) console.warn(`nfse: config: ${problem}`)
 if (!env.API_TOKEN) console.warn('nfse: API_TOKEN is empty; every /v1 call will be refused')
+const notice = adminPanelNotice(env)
+if (notice.warn) console.warn(notice.message)
+else console.log(notice.message)
 const current = certificate()
 console.log('error' in current ? `nfse: certificate: ${current.error}` : `nfse: certificate valid until ${current.notAfter}`)
 

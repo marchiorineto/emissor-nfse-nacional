@@ -1,5 +1,6 @@
 import { createHmac } from 'node:crypto'
 import { Hono, type MiddlewareHandler } from 'hono'
+import { getCookie } from 'hono/cookie'
 import { registerAdmin } from './admin.ts'
 import { configFrom, configProblems } from './config.ts'
 import { hosts, type Environment } from './dps.ts'
@@ -7,8 +8,9 @@ import { publicLookupUrl } from './danfse.ts'
 import type { Env } from './env.ts'
 import type { Certificate } from './gov.ts'
 import { createNotas, isNotaError, type Gov, type Nota, type NotaStatus, type Repo } from './notas.ts'
+import { parseHash } from './password.ts'
 import { parseIssueRequest } from './request.ts'
-import { sessionKey, timingSafeEqual } from './session.ts'
+import { SESSION_COOKIE, csrfToken, readSession, sessionKey, timingSafeEqual } from './session.ts'
 
 export interface AppDeps {
   env: Env
@@ -22,6 +24,16 @@ export interface AppDeps {
 const NOTA_STATUSES: readonly NotaStatus[] = ['pending', 'unknown', 'issued', 'rejected', 'canceled', 'replaced']
 const MAX_LIST = 100
 const STATUS_CODE: Record<NotaStatus, 200 | 202 | 422> = { issued: 200, canceled: 200, replaced: 200, rejected: 422, pending: 202, unknown: 202 }
+
+/**
+ * The startup log line about the admin panel: off (ADMIN_PASSWORD empty), misconfigured (a value that is not a valid
+ * hash, so every login fails closed; a warning) or on. It never includes the value itself.
+ */
+export const adminPanelNotice = (env: Env): { warn: boolean; message: string } => {
+  if (!env.ADMIN_PASSWORD) return { warn: false, message: 'nfse: admin panel off (ADMIN_PASSWORD is empty); run pnpm run admin-password to turn it on' }
+  if (!parseHash(env.ADMIN_PASSWORD)) return { warn: true, message: 'nfse: ADMIN_PASSWORD is not a valid hash; every login will fail. Run pnpm run admin-password and restart' }
+  return { warn: false, message: 'nfse: admin panel on /admin' }
+}
 
 export const createApp = ({ env, repo, gov, certificate, now = Date.now }: AppDeps): Hono => {
   const notas = () => createNotas({ repo, gov, config: configFrom(env) })
@@ -55,15 +67,29 @@ export const createApp = ({ env, repo, gov, certificate, now = Date.now }: AppDe
    */
   const admin = env.ADMIN_PASSWORD ? { key: sessionKey(env.ADMIN_PASSWORD) } : undefined
 
-  const requireToken: MiddlewareHandler = async (c, next) => {
-    const token = c.req.header('authorization')?.replace(/^Bearer /, '') ?? ''
-    if (!env.API_TOKEN || !timingSafeEqual(token, env.API_TOKEN)) return c.json({ error: 'unauthorized' }, 401)
+  /**
+   * Bearer token first, exactly as before, for external systems (D-19); otherwise the admin session cookie, which also
+   * needs X-CSRF-Token on every method but GET and HEAD (D-16, D-18).
+   */
+  const requireAuth: MiddlewareHandler = async (c, next) => {
+    const header = c.req.header('authorization')
+    if (header !== undefined || !admin) {
+      const token = header?.replace(/^Bearer /, '') ?? ''
+      if (!env.API_TOKEN || !timingSafeEqual(token, env.API_TOKEN)) return c.json({ error: 'unauthorized' }, 401)
+      return next()
+    }
+    // One answer whatever is wrong with the cookie: missing, empty, expired, tampered or signed under another hash (D-05).
+    const session = readSession(admin.key, getCookie(c, SESSION_COOKIE), now())
+    if (!session) return c.json({ error: 'unauthorized' }, 401)
+    if (c.req.method !== 'GET' && c.req.method !== 'HEAD' && !timingSafeEqual(c.req.header('x-csrf-token') ?? '', csrfToken(admin.key, session.id))) {
+      return c.json({ error: 'invalid csrf token' }, 403)
+    }
     await next()
   }
 
-  app.use('/v1/*', requireToken)
+  app.use('/v1/*', requireAuth)
   // /health too: with ?deep=1 it calls the government with the certificate.
-  app.use('/health', requireToken)
+  app.use('/health', requireAuth)
   if (admin) registerAdmin(app, { env, key: admin.key, now })
 
   /** Checks the settings and the certificate's expiry; `?deep=1` also asks the government. */
