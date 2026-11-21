@@ -20,7 +20,7 @@ step, and its text is in Brazilian Portuguese. External systems keep calling `/v
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Admin Password and Login** - Operator sets a hashed admin password with a script and logs in to a session-protected `/admin`
+- [x] **Phase 1: Admin Password and Login** - Operator sets a hashed admin password with a script and logs in to a session-protected `/admin` (completed 2026-11-21)
 - [x] **Phase 2: Notas Panel** - Logged-in admin lists, filters, opens and downloads notas (completed 2026-11-21)
 - [ ] **Phase 3: Nota Actions** - Logged-in admin issues, cancels and duplicates notas
 
@@ -36,7 +36,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. With a password set, the admin opens `/login`, enters it and lands on `/admin`; a wrong password shows an error that says nothing more than that it failed, and repeated failures from the same address are slowed down.
   4. A successful login sets an HttpOnly, SameSite=Strict session cookie (Secure over HTTPS) that expires after 12 hours; with it the browser can call the `/v1` routes, POST calls also need a CSRF token, and external systems' Bearer calls behave unchanged.
   5. The admin can log out, which ends the session, and visiting `/admin` without a valid session redirects to `/login`; running `pnpm run admin-password` again replaces the hash and every earlier session stops working.
-**Plans:** 5/5 plans executed
+**Plans:** 6/6 plans complete
 
 Plans:
 **Wave 1**
@@ -95,6 +95,6 @@ Phases execute in numeric order: 1 → 2 → 3
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Admin Password and Login | 5/5 | In Progress | - |
+| 1. Admin Password and Login | 6/6 | Complete    | 2026-11-21 |
 | 2. Notas Panel | 4/4 | Complete    | 2026-11-21 |
 | 3. Nota Actions | 0/TBD | Not started | - |

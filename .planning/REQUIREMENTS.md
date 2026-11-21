@@ -9,18 +9,18 @@ Requirements for milestone v1.0 (Painel administrativo). Each maps to roadmap ph
 
 ### Admin password
 
-- [ ] **PASS-01**: Operator can run `pnpm run admin-password`, which asks for the password twice without echoing it
-- [ ] **PASS-02**: If the two entries differ (or are empty, or shorter than 12 characters), the script exits with an error and `.env` is left unchanged
-- [ ] **PASS-03**: If they match, the script stores only a salted scrypt hash in `ADMIN_PASSWORD` in `.env`, creating `.env` from `.env.example` when missing and keeping all other lines
-- [ ] **PASS-04**: Running the script again replaces the hash, and existing admin sessions stop working
+- [x] **PASS-01**: Operator can run `pnpm run admin-password`, which asks for the password twice without echoing it
+- [x] **PASS-02**: If the two entries differ (or are empty, or shorter than 12 characters), the script exits with an error and `.env` is left unchanged
+- [x] **PASS-03**: If they match, the script stores only a salted scrypt hash in `ADMIN_PASSWORD` in `.env`, creating `.env` from `.env.example` when missing and keeping all other lines
+- [x] **PASS-04**: Running the script again replaces the hash, and existing admin sessions stop working
 
 ### Authentication
 
-- [ ] **AUTH-01**: When `ADMIN_PASSWORD` is empty, `/login` and `/admin` answer 404 and `/v1` accepts only the Bearer token, exactly as today
+- [x] **AUTH-01**: When `ADMIN_PASSWORD` is empty, `/login` and `/admin` answer 404 and `/v1` accepts only the Bearer token, exactly as today
 - [x] **AUTH-02**: Admin can open `/login`, enter the password, and land on `/admin` when it matches the hash
 - [x] **AUTH-03**: A wrong password shows an error on `/login` without saying more, and repeated failures from the same address are slowed down
-- [ ] **AUTH-04**: A successful login sets an HttpOnly, SameSite=Strict session cookie (Secure over HTTPS) that expires after 12 hours
-- [ ] **AUTH-05**: With that cookie, the browser can call the `/v1` routes; write calls (POST) also need a CSRF token, and external systems keep using the Bearer token unchanged
+- [x] **AUTH-04**: A successful login sets an HttpOnly, SameSite=Strict session cookie (Secure over HTTPS) that expires after 12 hours
+- [x] **AUTH-05**: With that cookie, the browser can call the `/v1` routes; write calls (POST) also need a CSRF token, and external systems keep using the Bearer token unchanged
 - [x] **AUTH-06**: Admin can log out, which ends the session; visiting `/admin` without a valid session redirects to `/login`
 
 ### Notas panel
@@ -62,15 +62,15 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| PASS-01 | Phase 1 | Pending |
-| PASS-02 | Phase 1 | Pending |
-| PASS-03 | Phase 1 | Pending |
-| PASS-04 | Phase 1 | Pending |
-| AUTH-01 | Phase 1 | Pending |
+| PASS-01 | Phase 1 | Complete |
+| PASS-02 | Phase 1 | Complete |
+| PASS-03 | Phase 1 | Complete |
+| PASS-04 | Phase 1 | Complete |
+| AUTH-01 | Phase 1 | Complete |
 | AUTH-02 | Phase 1 | Complete |
 | AUTH-03 | Phase 1 | Complete |
-| AUTH-04 | Phase 1 | Pending |
-| AUTH-05 | Phase 1 | Pending |
+| AUTH-04 | Phase 1 | Complete |
+| AUTH-05 | Phase 1 | Complete |
 | AUTH-06 | Phase 1 | Complete |
 | PANEL-01 | Phase 2 | Complete |
 | PANEL-02 | Phase 2 | Complete |
