@@ -25,10 +25,10 @@ Requirements for milestone v1.0 (Painel administrativo). Each maps to roadmap ph
 
 ### Notas panel
 
-- [ ] **PANEL-01**: Admin sees the notas on `/admin`, newest first, with date, client, value, DPS/NFS-e number and status, loaded from `GET /v1/notas`
-- [ ] **PANEL-02**: Admin can filter the list by status and load the next page
-- [ ] **PANEL-03**: Admin can open a nota and see all its details, including the government's errors when it was rejected
-- [ ] **PANEL-04**: Admin can download the PDF of an issued nota (XML dropped from the panel on 2026-11-20; it stays available through the API)
+- [x] **PANEL-01**: Admin sees the notas on `/admin`, newest first, with date, client, value, DPS/NFS-e number and status, loaded from `GET /v1/notas`
+- [x] **PANEL-02**: Admin can filter the list by status and load the next page
+- [x] **PANEL-03**: Admin can open a nota and see all its details, including the government's errors when it was rejected
+- [x] **PANEL-04**: Admin can download the PDF of an issued nota (XML dropped from the panel on 2026-11-20; it stays available through the API)
 
 ### Nota actions
 
@@ -72,10 +72,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | AUTH-04 | Phase 1 | Pending |
 | AUTH-05 | Phase 1 | Pending |
 | AUTH-06 | Phase 1 | Complete |
-| PANEL-01 | Phase 2 | Pending |
-| PANEL-02 | Phase 2 | Pending |
-| PANEL-03 | Phase 2 | Pending |
-| PANEL-04 | Phase 2 | Pending |
+| PANEL-01 | Phase 2 | Complete |
+| PANEL-02 | Phase 2 | Complete |
+| PANEL-03 | Phase 2 | Complete |
+| PANEL-04 | Phase 2 | Complete |
 | ACT-01 | Phase 3 | Pending |
 | ACT-02 | Phase 3 | Pending |
 | ACT-03 | Phase 3 | Pending |

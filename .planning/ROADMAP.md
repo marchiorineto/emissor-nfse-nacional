@@ -21,7 +21,7 @@ step, and its text is in Brazilian Portuguese. External systems keep calling `/v
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [ ] **Phase 1: Admin Password and Login** - Operator sets a hashed admin password with a script and logs in to a session-protected `/admin`
-- [ ] **Phase 2: Notas Panel** - Logged-in admin lists, filters, opens and downloads notas
+- [x] **Phase 2: Notas Panel** - Logged-in admin lists, filters, opens and downloads notas (completed 2026-11-21)
 - [ ] **Phase 3: Nota Actions** - Logged-in admin issues, cancels and duplicates notas
 
 ## Phase Details
@@ -62,7 +62,7 @@ Plans:
   2. The admin can filter the list by status and load the next page, and the filter stays applied while more notas load.
   3. The admin can open a nota and see all its details, including the government's errors when it was rejected.
   4. For an issued nota, the admin can download the PDF from the panel.
-**Plans:** 4/4 plans executed
+**Plans:** 4/4 plans complete
 
 Plans:
 **Wave 1**
@@ -96,5 +96,5 @@ Phases execute in numeric order: 1 → 2 → 3
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Admin Password and Login | 5/5 | In Progress | - |
-| 2. Notas Panel | 4/4 | In Progress | - |
+| 2. Notas Panel | 4/4 | Complete    | 2026-11-21 |
 | 3. Nota Actions | 0/TBD | Not started | - |

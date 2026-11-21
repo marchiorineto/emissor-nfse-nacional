@@ -27,12 +27,13 @@ goes missing.
 - ✓ List notas by status with cursor pagination through `GET /v1/notas` — existing
 - ✓ `/health` checks settings, certificate expiry and, with `?deep=1`, the city agreement — existing
 - ✓ Runs as a plain Node.js server with SQLite and a Docker image (migrated from Cloudflare) — pre-v1.0
+- ✓ Admin panel lists, filters, opens and downloads notas (PDF) at `/admin` through the session cookie — Phase 2
 
 ### Active
 
 - [ ] Admin password set by a local script and stored only as a hash in `.env`
 - [ ] Password login that opens a browser session to an admin panel
-- [ ] Admin panel to list, view, download, cancel, duplicate and issue notas through the existing `/v1` API
+- [ ] Admin panel to cancel, duplicate and issue notas through the existing `/v1` API (list, view and download shipped in Phase 2)
 
 ### Out of Scope
 
@@ -100,4 +101,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-11-20 after starting milestone v1.0*
+*Last updated: 2026-11-21 after Phase 2*
