@@ -1,12 +1,15 @@
 // Adds the A1 certificate to .env: checks that the .pfx opens with the password, is not expired and belongs to the
 // ISSUER_CNPJ, then writes it in base64 as CERT_PFX_B64, with CERT_PASSWORD. Creates .env from .env.example when
 // there is none, and generates the API_TOKEN when it is empty.
-// Usage: pnpm run certificate <file.pfx>. Asks for the password, or reads it from CERT_PASSWORD.
+// Usage: pnpm run certificate <file.pfx>. Asks for the password, or reads it from CERT_PASSWORD given on the command
+// line (CERT_PASSWORD=... pnpm run certificate <file.pfx>); the CERT_PASSWORD already in .env is never reused.
+// Runs again over an existing .env, replacing CERT_PFX_B64 and CERT_PASSWORD and keeping every other line.
 // package.json runs it with --openssl-legacy-provider, so older .pfx files (RC2/3DES) open here as in the server.
 import { randomBytes } from 'node:crypto'
 import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createSecureContext, TLSSocket } from 'node:tls'
+import { parseEnv } from 'node:util'
 
 const ROOT = join(import.meta.dirname, '..')
 const ENV_FILE = join(ROOT, '.env')
@@ -68,7 +71,11 @@ const pfx = (() => {
     return fail(`arquivo não encontrado: ${file}`)
   }
 })()
-const password = process.env.CERT_PASSWORD ?? (await askHidden('Senha do certificado: ').catch((error) => fail(error.message)))
+// package.json loads .env, so CERT_PASSWORD may be the one this script wrote last time (or the empty line from
+// .env.example). That value belongs to the old certificate: only a CERT_PASSWORD given on the command line counts.
+const fromEnvFile = existsSync(ENV_FILE) ? parseEnv(readFileSync(ENV_FILE, 'utf8')).CERT_PASSWORD : undefined
+const given = process.env.CERT_PASSWORD
+const password = given && given !== fromEnvFile ? given : await askHidden('Senha do certificado: ').catch((error) => fail(error.message))
 const certificate = openCertificate(pfx, password)
 const expiresAt = new Date(certificate.valid_to)
 

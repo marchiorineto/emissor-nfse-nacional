@@ -133,6 +133,11 @@ O script pede a senha e confere se o certificado abre, se está na validade e se
 certificado em base64 no `.env` (`CERT_PFX_B64`), com a senha (`CERT_PASSWORD`). Ele também aceita os arquivos `.pfx`
 mais antigos (RC2/3DES), comuns em certificados A1.
 
+Pode rodar de novo com o `.env` já existente, por exemplo para trocar o certificado: ele substitui `CERT_PFX_B64` e
+`CERT_PASSWORD` e mantém as outras linhas. A senha é sempre pedida; a que já está no `.env` não é reaproveitada. Sem
+terminal (num script, por exemplo), passe a senha na linha de comando:
+`CERT_PASSWORD='senha' pnpm run certificate caminho/do/certificado.pfx`.
+
 Se o `API_TOKEN` estiver vazio, o script também gera um. É o token que os seus sistemas usam para chamar a API. Guarde-o
 num lugar seguro: ele protege a API e também assina os links públicos das notas. Trocar o token invalida os links já
 enviados.
