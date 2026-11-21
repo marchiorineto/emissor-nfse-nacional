@@ -7,7 +7,7 @@ status: validated
 nyquist_compliant: true
 wave_0_complete: true
 created: "2026-11-20"
-audited: "2026-11-20"
+audited: "2026-11-21"
 ---
 
 # Phase 1 — Validation Strategy
@@ -58,6 +58,9 @@ Filled in by the planner and executor. Requirement-to-test seed, from 01-RESEARC
 | 01-05-T1 | 01-05 | 4 | AUTH-02, AUTH-06 (gap G-01-3) | 01-05 threat model | Classless Pico 2.1.1 pinned with an SRI hash equal to jsDelivr's; PAGE_CSP unchanged | unit + network check | `pnpm exec vitest run src/admin.test.ts` (plus the plan's curl/openssl hash check) | ✅ | ✅ green |
 | 01-05-T2 | 01-05 | 4 | AUTH-03, AUTH-06 (gap G-01-3) | 01-05 threat model | Nav header with labelled CNPJ, distinct light/dark badges, compact Sair; wrong password sets aria-invalid + aria-describedby, 429 sets only aria-describedby | app | `pnpm exec vitest run src/admin.test.ts` | ✅ | ✅ green |
 | 01-05-T3 | 01-05 | 4 | AUTH-02, AUTH-06 (gap G-01-3) | 01-05 threat model | 403 cross-site, 413, 403 bad CSRF render HTML refusal pages with one link back and panel headers; no script/class/style and only the Pico URL on every page | app | `pnpm exec vitest run src/admin.test.ts` | ✅ | ✅ green |
+| 01-06-T1 | 01-06 | 5 | AUTH-02 (gap G-01-4) | — | Same-origin `/panel.css` through `pageHeaders` (`text/css`, no `url(`/`@import`), `PAGE_CSP` `style-src` gains only `'self'`, linked after Pico | integration | `pnpm exec vitest run src/admin.test.ts` | ✅ | ✅ green |
+| 01-06-T2 | 01-06 | 5 | AUTH-02 (gap G-01-4) | — | Login and refusal pages wrapped in `<main data-card><article><header>`, centered and capped at 24rem, no class/style attributes | integration | `pnpm exec vitest run src/admin.test.ts` | ✅ | ✅ green |
+| 01-06-T3 | 01-06 | 5 | AUTH-02 (gap G-01-4) | — | Tests: pinned CSP, `/panel.css` headers, 404 when panel off, link on every page, card markup | integration | `pnpm exec vitest run src/admin.test.ts` | ✅ | ✅ green |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
@@ -83,6 +86,7 @@ Under tracer-first planning each file is created by the first task that needs it
 | Pico.css styling loads with SRI | AUTH-02 | Needs a browser | Open `/login` and `/admin`; confirm styled page and no SRI error in console |
 | Classless layout: centered content with side gutters, nav header alignment, badge contrast in light and dark OS schemes | AUTH-02, AUTH-06 (G-01-3) | Visual; needs a browser | Open `/login` and `/admin` in light and dark mode, in `restricted` and `production`; confirm gutters, nav layout, compact Sair and distinct badges (UAT re-test of G-01-3) |
 | Secure cookie flag over HTTPS | AUTH-04 | Needs real HTTPS / proxy | Log in over HTTPS; check cookie flags in devtools |
+| Login and refusal pages as one centered narrow card (light/dark, narrow window) | AUTH-02 (G-01-4) | Visual layout | Open `/login`, a wrong password and a refusal page on desktop and a narrow window (UAT test 5, passed 2026-11-20) |
 
 ---
 
