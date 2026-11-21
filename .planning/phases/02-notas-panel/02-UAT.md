@@ -1,5 +1,5 @@
 ---
-status: partial
+status: testing
 phase: 02-notas-panel
 source: [02-VERIFICATION.md]
 started: 2026-11-20T23:35:00Z
@@ -8,7 +8,11 @@ updated: 2026-11-21T00:30:00Z
 
 ## Current Test
 
-[testing paused — 1 items outstanding]
+number: 2
+name: In the operator's own browser: change the Situação filter, press Back, reload, click Carregar mais, click an Emitida row's PDF link, open a nota from its number, copy its URL into a new tab, close with Fechar / Esc / outside click / Back
+expected: |
+  URL carries ?status=; list follows Back and reload; paging appends under the filter; the PDF saves as nfse-NUMBER.pdf with no new tab; the copied URL reopens the same nota; Back after closing the dialog feels acceptable (see IN-03 in 02-REVIEW.md: it takes two presses today)
+awaiting: user response
 
 ## Tests
 
