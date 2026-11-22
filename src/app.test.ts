@@ -84,6 +84,41 @@ describe('app', () => {
   })
 })
 
+describe('concurrent requests for one id', () => {
+  it('sends the DPS once for two concurrent POST /v1/notas with the same id', async () => {
+    const sent: string[] = []
+    const slowGov: Gov = {
+      ...gov,
+      sendDps: async (_host, xml) => {
+        sent.push(xml)
+        await new Promise((resolve) => setTimeout(resolve, 100))
+        return ok(201, { chaveAcesso: '4'.repeat(50), nfseXml: '<NFSe><infNFSe><nNFSe>7</nNFSe></infNFSe></NFSe>' })
+      },
+    }
+    const repo = createMemoryRepo()
+    const app = createApp({ env, repo, gov: slowGov, certificate: () => ({ error: 'none' }) })
+    const post = () =>
+      app.request('http://api.test/v1/notas', {
+        method: 'POST',
+        headers: { ...auth, 'content-type': 'application/json' },
+        body: JSON.stringify({ id: 'race-1', serviceCode: '080201', description: 'Aula', valueCents: 100 }),
+      })
+
+    const [first, second] = await Promise.all([post(), post()])
+
+    expect(first.status).toBe(200)
+    expect(second.status).toBe(200)
+    expect(sent).toHaveLength(1)
+    const a = (await first.json()) as { dpsNumber: number; accessKey: string }
+    const b = (await second.json()) as { dpsNumber: number; accessKey: string }
+    expect(a.dpsNumber).toBe(1)
+    expect(b.dpsNumber).toBe(a.dpsNumber)
+    expect(b.accessKey).toBe(a.accessKey)
+    const stored = await repo.list({ limit: 10 })
+    expect(stored.map((nota) => nota.id)).toEqual(['race-1'])
+  })
+})
+
 describe('GET /v1/notas limit', () => {
   const COUNT = 101
   const listed = async (app: ReturnType<typeof setup>, query: string): Promise<number> => {
