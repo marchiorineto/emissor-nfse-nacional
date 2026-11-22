@@ -109,10 +109,13 @@ describe('admin login', () => {
       '<button>Sair</button>',
       'name="csrf" value="',
       '<meta name="csrf-token" content="',
+      '<a href="/admin" aria-current="page">Notas</a>',
+      '<a href="/admin/emitir">Emitir nota</a>',
     ]) {
       expect(body).toContain(text)
     }
     expect(body.match(/<h1>/g)).toHaveLength(1)
+    expect(body.match(/aria-current/g)).toHaveLength(1)
     expect(body).not.toContain('data-theme="dark"')
   })
 
@@ -360,6 +363,7 @@ describe('panel security headers', () => {
       await (await login(app, PASSWORD, { 'x-forwarded-for': '198.51.100.30' })).text(),
       await (await app.request('http://api.test/admin', { headers: { cookie } })).text(),
       await (await production.request('http://api.test/admin', { headers: { cookie: productionSession.cookie } })).text(),
+      await (await app.request('http://api.test/admin/emitir', { headers: { cookie } })).text(),
       await (await rawLogin(app, PASSWORD, { 'sec-fetch-site': 'cross-site' })).text(),
       await (await rawLogin(app, '', { 'sec-fetch-site': 'same-origin' }, `password=${'a'.repeat(4991)}`)).text(),
       await (await logout(app, { cookie }, 'wrong')).text(),
@@ -369,6 +373,9 @@ describe('panel security headers', () => {
       if (body.includes('<main id="notas">')) {
         expect(body.match(/<script/g)).toHaveLength(1)
         expect(body).toContain('<script type="module" src="/admin/panel.js"></script>')
+      } else if (body.includes('<main id="emitir">')) {
+        expect(body.match(/<script/g)).toHaveLength(1)
+        expect(body).toContain('<script type="module" src="/admin/emitir.js"></script>')
       } else {
         expect(body).not.toContain('<script')
       }
@@ -390,7 +397,7 @@ describe('panel security headers', () => {
   it('serves the panel modules to a session as text/javascript with the panel headers, and 303 to /login without one', async () => {
     const app = setup()
     const { cookie } = await session(app)
-    for (const name of ['panel.js', 'format.js']) {
+    for (const name of ['panel.js', 'format.js', 'api.js', 'form.js', 'emitir.js']) {
       const res = await app.request(`http://api.test/admin/${name}`, { headers: { cookie } })
       expect(res.status).toBe(200)
       expect(res.headers.get('content-type')).toBe('text/javascript; charset=utf-8')
@@ -401,9 +408,68 @@ describe('panel security headers', () => {
       expect(anonymous.headers.get('location')).toBe('/login')
       expectHeaders(anonymous)
     }
-    for (const name of ['format.d.ts', 'nope.js']) {
+    for (const name of ['format.d.ts', 'api.d.ts', 'form.d.ts', 'form.test.ts', 'nope.js']) {
       expect((await app.request(`http://api.test/admin/${name}`, { headers: { cookie } })).status).toBe(404)
     }
+  })
+
+  it('redirects /admin/emitir to /login without a session, with the panel headers', async () => {
+    const res = await setup().request('http://api.test/admin/emitir')
+    expect(res.status).toBe(303)
+    expect(res.headers.get('location')).toBe('/login')
+    expectHeaders(res)
+  })
+
+  it('renders the issue form shell to a session, with the panel headers', async () => {
+    const app = setup()
+    const { cookie } = await session(app)
+    const res = await app.request('http://api.test/admin/emitir', { headers: { cookie } })
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toContain('text/html')
+    expectHeaders(res)
+    const body = await res.text()
+    for (const text of [
+      '<title>Emitir nota – Emissor de NFS-e</title>',
+      '<main id="emitir">',
+      '<h2>Emitir nota</h2>',
+      '<p id="emitir-state" role="status"></p>',
+      '<div id="emitir-errors"></div>',
+      '<button type="submit" id="emitir-submit">Emitir nota</button>',
+      '<meta name="csrf-token" content="',
+      'CNPJ 11.222.333/0001-81',
+      '<a href="/admin">Notas</a>',
+      '<a href="/admin/emitir" aria-current="page">Emitir nota</a>',
+      '<button>Sair</button>',
+    ]) {
+      expect(body).toContain(text)
+    }
+    expect(body.match(/<h1>/g)).toHaveLength(1)
+    expect(body.match(/<script/g)).toHaveLength(1)
+    expect(body).toContain('<script type="module" src="/admin/emitir.js"></script>')
+    expect(body.match(/aria-current/g)).toHaveLength(1)
+    const form = body.match(/<form id="emitir-form"[^>]*>/g)
+    expect(form).toEqual(['<form id="emitir-form" method="post" novalidate>'])
+    expect(form?.[0]).not.toMatch(/\saction=/)
+  })
+
+  it('gives each of the ten fields a control with a matching label and no name attribute', async () => {
+    const app = setup()
+    const { cookie } = await session(app)
+    const body = await (await app.request('http://api.test/admin/emitir', { headers: { cookie } })).text()
+    const main = /<main id="emitir">([\s\S]*?)<\/main>/.exec(body)?.[1] ?? ''
+    expect(main).not.toMatch(/\sname=/)
+    for (const key of ['id', 'taxId', 'name', 'email', 'phone', 'serviceCode', 'nbsCode', 'description', 'value', 'competence']) {
+      expect(main).toContain(`<label for="field-${key}">`)
+      expect(main).toMatch(new RegExp(`<(input|textarea) [^>]*id="field-${key}"`))
+    }
+    const control = (key: string) => new RegExp(`<(?:input|textarea) [^>]*id="field-${key}"[^>]*>`).exec(main)?.[0] ?? ''
+    expect(control('id')).toContain('maxlength="200"')
+    expect(control('name')).toContain('maxlength="300"')
+    expect(control('email')).toContain('maxlength="80"')
+    expect(control('description')).toContain('maxlength="2000"')
+    expect(control('competence')).toContain('type="date"')
+    expect(control('email')).toContain('type="email"')
+    expect(control('value')).toContain('inputmode="decimal"')
   })
 
   it('renders the notas shell: a pt-BR noscript line, a status line and a six-column table over an empty body', async () => {
@@ -518,6 +584,8 @@ describe('session cookie flags, expiry and edge cases', () => {
       await (await app.request('http://api.test/admin', { headers: { cookie } })).text(),
       await (await app.request('http://api.test/admin/panel.js', { headers: { cookie } })).text(),
       await (await app.request('http://api.test/admin/format.js', { headers: { cookie } })).text(),
+      await (await app.request('http://api.test/admin/emitir', { headers: { cookie } })).text(),
+      ...(await Promise.all(['api.js', 'form.js', 'emitir.js'].map(async (name) => (await app.request(`http://api.test/admin/${name}`, { headers: { cookie } })).text()))),
     ]
     for (const body of bodies) expect(body).not.toContain(TOKEN)
     expect(res.headers.get('set-cookie')).not.toContain(TOKEN)
