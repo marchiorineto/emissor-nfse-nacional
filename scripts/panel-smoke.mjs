@@ -148,13 +148,73 @@ const detailFixtures = () => {
   ]
 }
 
-/** Serves one app on a free 127.0.0.1 port; scenarios share the password hash, so one session cookie works on every port. */
-const scenario = async ({ notas = [], failList = false } = {}) => {
+/**
+ * A government stub that can actually answer, one scripted step at a time. `dps` and `events` are step queues the checks push
+ * onto; an empty queue means the default ('issue' for a DPS, 'ok' for an event). A step is a name or { delayMs, then }, which
+ * waits delayMs and then applies `then` (default the same default). `sent` and `eventsSent` hold every XML posted. The steps:
+ * DPS 'issue' (a unique access key and NFS-e number), 'reject' (E0310 with a hostile complement), 'unreached';
+ * event 'ok', 'refuse' (E1235 with a hostile complement), 'unreached'.
+ */
+const scriptedGov = () => {
+  let counter = 0
+  const dps = []
+  const events = []
+  const sent = []
+  const eventsSent = []
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+  const take = async (queue, fallback) => {
+    const step = queue.shift() ?? fallback
+    if (typeof step === 'string') return step
+    await wait(step.delayMs ?? 0)
+    return step.then ?? fallback
+  }
+  const unreached = { reached: false, error: 'offline' }
+  const gov = {
+    sendDps: async (_host, xml) => {
+      sent.push(xml)
+      const step = await take(dps, 'issue')
+      if (step === 'reject') {
+        return { reached: true, status: 400, json: { erros: [{ Codigo: 'E0310', Descricao: 'Código de tributação nacional inexistente', Complemento: HOSTILE }] } }
+      }
+      if (step === 'unreached') return unreached
+      counter += 1
+      return {
+        reached: true,
+        status: 201,
+        json: {
+          chaveAcesso: String(counter).padStart(50, '0'),
+          nfseXml: `<NFSe><infNFSe><nNFSe>${900 + counter}</nNFSe><dhProc>2026-11-21T10:00:00-03:00</dhProc></infNFSe></NFSe>`,
+        },
+      }
+    },
+    sendEvent: async (_host, _accessKey, xml) => {
+      eventsSent.push(xml)
+      const step = await take(events, 'ok')
+      if (step === 'refuse') {
+        return { reached: true, status: 400, json: { erros: [{ Codigo: 'E1235', Descricao: 'Cancelamento fora do prazo', Complemento: HOSTILE }] } }
+      }
+      if (step === 'unreached') return unreached
+      return { reached: true, status: 201, json: { eventoXml: '<evento/>' } }
+    },
+    get: async (_host, path) => {
+      if (path.startsWith('/danfse/')) return { reached: true, status: 200, json: { pdfB64: Buffer.from('%PDF-1.4 smoke').toString('base64') } }
+      if (path.includes('/dps/')) return { reached: true, status: 404, json: {} }
+      return unreached
+    },
+  }
+  return { gov, dps, events, sent, eventsSent }
+}
+
+/**
+ * Serves one app on a free 127.0.0.1 port; scenarios share the password hash, so one session cookie works on every port. `gov`
+ * replaces the default stub (which never answers a DPS); `posts` records, on the server side, every non-GET request to /v1.
+ */
+const scenario = async ({ notas = [], failList = false, gov: given } = {}) => {
   const base = createSqliteRepo(openDatabase(':memory:'))
   for (const nota of notas) await base.save(nota)
   const repo = failList ? { ...base, list: async () => Promise.reject(new Error('boom')) } : base
   const unreached = { reached: false, error: 'offline' }
-  const gov = {
+  const gov = given ?? {
     sendDps: async () => unreached,
     sendEvent: async () => unreached,
     get: async (_host, path) => (path.startsWith('/danfse/') ? { reached: true, status: 200, json: { pdfB64: Buffer.from('%PDF-1.4 smoke').toString('base64') } } : unreached),
@@ -172,10 +232,18 @@ const scenario = async ({ notas = [], failList = false } = {}) => {
   const app = createApp({ env, repo, gov, certificate: () => ({ error: 'none' }) })
   // The failing scenario answers its 500 quietly, so the run output stays readable.
   if (failList) app.onError((_error, c) => c.json({ error: 'boom' }, 500))
-  const server = serve({ fetch: app.fetch, port: 0, hostname: '127.0.0.1' })
+  const posts = []
+  const recording = async (request, ...rest) => {
+    const { pathname } = new URL(request.url)
+    if (request.method !== 'GET' && pathname.startsWith('/v1/')) {
+      posts.push({ method: request.method, path: pathname, headers: Object.fromEntries(request.headers), body: await request.clone().text() })
+    }
+    return app.fetch(request, ...rest)
+  }
+  const server = serve({ fetch: recording, port: 0, hostname: '127.0.0.1' })
   servers.push(server)
   await new Promise((resolve) => server.once('listening', resolve))
-  return { port: server.address().port, origin: `http://127.0.0.1:${server.address().port}`, repo }
+  return { port: server.address().port, origin: `http://127.0.0.1:${server.address().port}`, repo, posts }
 }
 
 const main = await scenario({ notas: fixtures() })
@@ -188,6 +256,9 @@ const exact = await scenario({
 })
 const failing = await scenario({ notas: fixtures(), failList: true })
 const detail = await scenario({ notas: detailFixtures() })
+// The issue form: an empty repo and a government stub that issues, with the XML it was sent.
+const issuingGov = scriptedGov()
+const issuing = await scenario({ gov: issuingGov.gov })
 
 // (c) The real login: the cookie Chrome gets is the one the server issued.
 const loginRes = await fetch(`${main.origin}/login`, {
@@ -328,6 +399,45 @@ const goto = async (url) => {
   await waitFor(`location.href === ${JSON.stringify(url)} && document.readyState === 'complete' && !window.__stale`)
 }
 
+/**
+ * Like goto for a page that rewrites its own query string (emitir.js sets ?id=): the wait is the URL's pathname, a finished load
+ * and no stale marker, not the exact href.
+ */
+const gotoRewritten = async (url) => {
+  const target = new URL(url)
+  const current = await evaluate('location.href').catch(() => '')
+  if (typeof current === 'string' && current.split('#')[0] === url.split('#')[0]) {
+    await page('Page.navigate', { url: 'about:blank' })
+    await waitFor(`location.href === 'about:blank'`)
+  }
+  consoleErrors = []
+  v1Requests = []
+  extraInfo.clear()
+  await evaluate('window.__stale = true').catch(() => {})
+  await page('Page.navigate', { url })
+  await waitFor(`location.origin === ${JSON.stringify(target.origin)} && location.pathname === ${JSON.stringify(target.pathname)} && document.readyState === 'complete' && !window.__stale`)
+}
+
+/** Sets the form fields by key (#field-<key>) and dispatches a bubbling input event on each, as typing does. */
+const fill = (values) =>
+  evaluate(`(() => {
+    for (const [key, value] of Object.entries(${JSON.stringify(values)})) {
+      const el = document.getElementById('field-' + key)
+      el.value = value
+      el.dispatchEvent(new Event('input', { bubbles: true }))
+    }
+  })()`)
+
+/** Today's date in Brasília as YYYY-MM-DD, computed in Node. */
+const todayBrasilia = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
+
+/** Reloads the open page and waits for the new document. */
+const reload = async () => {
+  await evaluate('window.__stale = true')
+  await page('Page.reload')
+  await waitFor(`document.readyState === 'complete' && !window.__stale`)
+}
+
 /** Rows of the list as arrays of cell texts. */
 const rowTexts = () => evaluate(`[...document.querySelectorAll('#notas-body tr')].map((tr) => [...tr.children].map((td) => td.textContent))`)
 
@@ -357,6 +467,9 @@ const check = async (name, fn) => {
 const assert = (condition, message) => {
   if (!condition) throw new Error(message)
 }
+/** The value with every object's keys sorted, so two JSON texts compare regardless of key order. */
+const sortKeys = (value) =>
+  Array.isArray(value) ? value.map(sortKeys) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, sortKeys(value[key])])) : value
 
 // (f) Checks.
 await check('list-renders', async () => {
@@ -790,6 +903,58 @@ await check('dialog-narrow', async () => {
   await openDeepLink('rej')
   await shot('dialog-narrow.png')
   await viewport(1280, false)
+})
+
+await check('emitir-issue', async () => {
+  await viewport(1280, false)
+  await goto(`${issuing.origin}/admin`)
+  await waitFor(`document.getElementById('notas-state').textContent === 'Nenhuma nota encontrada.'`)
+  await evaluate(`document.querySelector('a[href="/admin/emitir"]').click()`)
+  await waitFor(`location.pathname === '/admin/emitir' && /^\\?id=painel-\\d{8}-[a-z0-9]{6}$/.test(location.search) && document.readyState === 'complete'`)
+  const today = todayBrasilia()
+  const first = await evaluate(`new URLSearchParams(location.search).get('id')`)
+  assert(first.slice(7, 15) === today.replaceAll('-', ''), `the suggested id "${first}" does not carry today's Brasília date ${today}`)
+  assert((await evaluate(`document.getElementById('field-id').value`)) === first, 'the id field differs from the URL id')
+  assert((await evaluate(`document.getElementById('field-competence').value`)) === today, 'the competence does not start on today in Brasília')
+
+  await reload()
+  assert((await evaluate(`new URLSearchParams(location.search).get('id')`)) === first, 'a reload changed the id in the URL')
+  assert((await evaluate(`document.getElementById('field-id').value`)) === first, 'a reload changed the id field')
+
+  const typed = 'loja 7/venda #42?'
+  await fill({ id: typed })
+  assert((await evaluate(`new URLSearchParams(location.search).get('id')`)) === typed, 'editing the id field did not rewrite ?id=')
+  await reload()
+  assert((await evaluate(`new URLSearchParams(location.search).get('id')`)) === typed, 'a reload changed the typed id')
+  assert((await evaluate(`document.getElementById('field-id').value`)) === typed, 'a reload changed the typed id in the field')
+  await fill({ id: first })
+
+  const csrf = await evaluate(`document.querySelector('meta[name="csrf-token"]').getAttribute('content')`)
+  assert(typeof csrf === 'string' && csrf.length > 0, 'the page has no csrf-token meta')
+  await fill({ taxId: '123.456.789-09', name: 'Maria Souza', serviceCode: '080201', description: 'Aula de violão', value: 'R$ 1.234,56' })
+  await evaluate(`document.getElementById('emitir-submit').click()`)
+  await waitFor(`location.pathname === '/admin' && location.hash === ${JSON.stringify(`#${new URLSearchParams({ nota: first })}`)}`)
+  await waitFor(`document.getElementById('nota-dialog').open && /^NFS-e \\d+$/.test(document.getElementById('nota-title').textContent)`)
+  assert((await evaluate(`document.getElementById('nota-status').textContent`)) === 'Emitida', 'the details do not show Emitida')
+
+  assert(issuing.posts.length === 1, `expected 1 POST to /v1, saw ${issuing.posts.length}`)
+  const [post] = issuing.posts
+  assert(post.method === 'POST' && post.path === '/v1/notas', `the POST was ${post.method} ${post.path}`)
+  assert(/nfse_admin=/.test(post.headers.cookie ?? ''), 'the POST does not carry the session cookie')
+  assert(post.headers['x-csrf-token'] === csrf, `the POST x-csrf-token is "${post.headers['x-csrf-token']}", expected the meta value`)
+  assert(post.headers['content-type'] === 'application/json', `the POST content-type is "${post.headers['content-type']}"`)
+  assert(!('authorization' in post.headers), 'the POST carries an Authorization header')
+  const expected = { id: first, competence: today, serviceCode: '080201', description: 'Aula de violão', valueCents: 123456, taker: { taxId: '12345678909', name: 'Maria Souza' } }
+  assert(JSON.stringify(sortKeys(JSON.parse(post.body))) === JSON.stringify(sortKeys(expected)), `the POST body is ${post.body}`)
+  assert(issuingGov.sent.length === 1, `the government was sent ${issuingGov.sent.length} DPS, expected 1`)
+
+  await evaluate(`document.querySelector('#nota-dialog form button').click()`)
+  await waitFor(`!document.getElementById('nota-dialog').open`)
+  await evaluate(`document.querySelector('a[href="/admin/emitir"]').click()`)
+  await waitFor(`location.pathname === '/admin/emitir' && /^\\?id=painel-/.test(location.search) && document.readyState === 'complete'`)
+  const second = await evaluate(`new URLSearchParams(location.search).get('id')`)
+  assert(second !== first, 'a second visit to Emitir nota reused the previous id')
+  assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
 })
 
 await check('console-clean', async () => {

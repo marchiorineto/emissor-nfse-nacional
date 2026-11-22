@@ -195,7 +195,7 @@ export const PAGE_CSP =
  * not a request) and served from /admin/ behind the session guard. Only these names are served; nothing else under src/ is.
  */
 export const PANEL_SCRIPTS: ReadonlyMap<string, string> = new Map(
-  ['panel.js', 'format.js'].map((name) => [name, readFileSync(new URL(`./panel/${name}`, import.meta.url), 'utf8')]),
+  ['panel.js', 'format.js', 'api.js', 'form.js', 'emitir.js'].map((name) => [name, readFileSync(new URL(`./panel/${name}`, import.meta.url), 'utf8')]),
 )
 
 export interface AdminDeps {
@@ -262,15 +262,16 @@ const environmentBadge = (environment: string): Html =>
     ? html`<strong><mark data-theme="dark">${environmentLabel(environment)}</mark></strong>`
     : html`<mark data-theme="light">${environmentLabel(environment)}</mark>`
 
+/** Which page of the panel is open; its header link carries aria-current="page". */
+type PanelPage = 'notas' | 'emitir'
+
 /**
- * The panel skeleton: a nav header with issuer and environment badge on the left and logout on the right, then the notas list: a
- * status line and a table that the /admin/panel.js module fills. The Sair button has no type attribute on purpose: inside a form it submits anyway, and leaving it off
- * keeps Pico's full-width and bottom-margin rules for typed submit buttons away, so it takes its content width in the nav.
+ * The header of every panel page: issuer and environment badge on the left; on the right the Notas and Emitir nota links (the
+ * open page's link is aria-current) and logout. The Sair button has no type attribute on purpose: inside a form it submits
+ * anyway, and leaving it off keeps Pico's full-width and bottom-margin rules for typed submit buttons away, so it takes its
+ * content width in the nav.
  */
-const adminPage = (cnpj: string, environment: string, csrf: string): Html =>
-  layout(
-    'Emissor de NFS-e',
-    html`<header>
+const panelHeader = (cnpj: string, environment: string, csrf: string, current: PanelPage): Html => html`<header>
         <nav>
           <ul>
             <li>
@@ -281,6 +282,8 @@ const adminPage = (cnpj: string, environment: string, csrf: string): Html =>
             </li>
           </ul>
           <ul>
+            <li><a href="/admin"${current === 'notas' ? html` aria-current="page"` : ''}>Notas</a></li>
+            <li><a href="/admin/emitir"${current === 'emitir' ? html` aria-current="page"` : ''}>Emitir nota</a></li>
             <li>
               <form method="post" action="/logout">
                 <input type="hidden" name="csrf" value="${csrf}">
@@ -289,7 +292,13 @@ const adminPage = (cnpj: string, environment: string, csrf: string): Html =>
             </li>
           </ul>
         </nav>
-      </header>
+      </header>`
+
+/** The notas list: the header, then a status line and a table that the /admin/panel.js module fills. */
+const adminPage = (cnpj: string, environment: string, csrf: string): Html =>
+  layout(
+    'Emissor de NFS-e',
+    html`${panelHeader(cnpj, environment, csrf, 'notas')}
       <main id="notas">
         <noscript><p>O painel precisa de JavaScript para mostrar as notas.</p></noscript>
         <h2>Notas</h2>
@@ -327,6 +336,61 @@ const adminPage = (cnpj: string, environment: string, csrf: string): Html =>
         </article>
       </dialog>
       <script type="module" src="/admin/panel.js"></script>`,
+    csrf,
+  )
+
+/**
+ * The issue form: a server-rendered shell that /admin/emitir.js drives. The form has method="post" and no action, and no
+ * field has a name attribute, so a native submit (the module not loaded yet) can never put taker data in a URL; the module
+ * reads the fields by id. The maxlength values are the lengths the DPS builder would otherwise cut silently.
+ */
+const emitirPage = (cnpj: string, environment: string, csrf: string): Html =>
+  layout(
+    'Emitir nota – Emissor de NFS-e',
+    html`${panelHeader(cnpj, environment, csrf, 'emitir')}
+      <main id="emitir">
+        <noscript><p>O formulário precisa de JavaScript para emitir a nota.</p></noscript>
+        <h2>Emitir nota</h2>
+        <p id="emitir-state" role="status"></p>
+        <div id="emitir-errors"></div>
+        <form id="emitir-form" method="post" novalidate>
+          <fieldset>
+            <legend>Venda</legend>
+            <label for="field-id">Identificador da venda</label>
+            <input type="text" id="field-id" required maxlength="200" autocomplete="off" aria-describedby="field-id-help">
+            <small id="field-id-help">Gerado pelo painel; pode trocar pelo número da sua venda. Enviar de novo o mesmo identificador nunca emite uma segunda nota.</small>
+            <label for="field-value">Valor (R$)</label>
+            <input type="text" id="field-value" required inputmode="decimal" placeholder="1.234,56" autocomplete="off">
+            <label for="field-competence">Competência</label>
+            <input type="date" id="field-competence" required>
+          </fieldset>
+          <fieldset>
+            <legend>Tomador (opcional)</legend>
+            <label for="field-taxId">CPF ou CNPJ</label>
+            <input type="text" id="field-taxId" inputmode="numeric" maxlength="18" autocomplete="off" aria-describedby="field-taxId-help">
+            <small id="field-taxId-help">Só números. CNPJ com letras ainda não é aceito.</small>
+            <label for="field-name">Nome</label>
+            <input type="text" id="field-name" maxlength="300">
+            <label for="field-email">E-mail</label>
+            <input type="email" id="field-email" maxlength="80">
+            <label for="field-phone">Telefone</label>
+            <input type="tel" id="field-phone" maxlength="30">
+          </fieldset>
+          <fieldset>
+            <legend>Serviço</legend>
+            <label for="field-serviceCode">Código do serviço</label>
+            <input type="text" id="field-serviceCode" required inputmode="numeric" maxlength="8" aria-describedby="field-serviceCode-help">
+            <small id="field-serviceCode-help">Código de tributação nacional (cTribNac), 6 dígitos.</small>
+            <label for="field-nbsCode">Código NBS (opcional)</label>
+            <input type="text" id="field-nbsCode" inputmode="numeric" maxlength="12" aria-describedby="field-nbsCode-help">
+            <small id="field-nbsCode-help">9 dígitos.</small>
+            <label for="field-description">Descrição do serviço</label>
+            <textarea id="field-description" required maxlength="2000" rows="3"></textarea>
+          </fieldset>
+          <button type="submit" id="emitir-submit">Emitir nota</button>
+        </form>
+      </main>
+      <script type="module" src="/admin/emitir.js"></script>`,
     csrf,
   )
 
@@ -450,5 +514,11 @@ export const registerAdmin = (app: Hono, { env, key, now }: AdminDeps): void => 
     const session = sessionOf(getCookie(c, SESSION_COOKIE))
     if (!session) return c.redirect('/login', 303)
     return c.html(adminPage(formatCnpj(env.ISSUER_CNPJ), env.NFSE_ENVIRONMENT, csrfToken(key, session.id)))
+  })
+
+  app.get('/admin/emitir', (c) => {
+    const session = sessionOf(getCookie(c, SESSION_COOKIE))
+    if (!session) return c.redirect('/login', 303)
+    return c.html(emitirPage(formatCnpj(env.ISSUER_CNPJ), env.NFSE_ENVIRONMENT, csrfToken(key, session.id)))
   })
 }
