@@ -2,6 +2,10 @@
 // Every API string reaches the DOM through textContent; nothing here ever parses markup or sets a style.
 import {
   ALREADY_ISSUED_NOTICE,
+  CANCEL_REASONS,
+  canCancel,
+  cancelProblem,
+  cancelSuggestion,
   detailSections,
   errorBoxes,
   formatBrl,
@@ -16,11 +20,13 @@ import {
   parseStatus,
   pdfFilename,
   pdfHref,
+  reasonProblem,
   statusLabel,
   statusNotice,
   statusSearch,
   takerCell,
 } from './format.js'
+import { pageApi } from './api.js'
 import { errorSection, note, text } from './dom.js'
 import { issueHints } from './form.js'
 
@@ -33,17 +39,10 @@ const dialog = document.getElementById('nota-dialog')
 const dialogTitle = document.getElementById('nota-title')
 const dialogStatus = document.getElementById('nota-status')
 const dialogBody = document.getElementById('nota-body')
+const dialogActions = document.getElementById('nota-actions')
 
-/** Fetches a /v1 path with the session cookie as the only credential; a 401 sends the browser to the login. */
-const api = async (path) => {
-  const res = await fetch(path, { credentials: 'same-origin', headers: { accept: 'application/json' } })
-  if (res.status === 401) {
-    location.assign('/login')
-    throw new Error('unauthorized')
-  }
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  return res.json()
-}
+/** The one door to /v1: the session cookie, the page's CSRF token on a write, and a 401 sending the browser to the login. */
+const api = pageApi()
 
 /** A table cell labelled with its column name, which the narrow-screen cards show through data-label. */
 const cell = (label) => {
@@ -58,6 +57,7 @@ const renderRow = (nota) => {
   const tr = document.createElement('tr')
   tr.setAttribute('role', 'row')
   tr.dataset.status = nota.status
+  tr.dataset.id = nota.id
 
   tr.append(Object.assign(cell('Competência'), { textContent: listDate(nota) }))
 
@@ -83,17 +83,37 @@ const renderRow = (nota) => {
   situation.append(label)
   tr.append(situation)
 
-  const pdf = cell('PDF')
+  const actions = cell('Ações')
   const href = pdfHref(nota)
   if (href) {
     const link = text('a', 'PDF')
     link.href = href
     link.download = pdfFilename(nota)
     link.setAttribute('aria-label', `Baixar PDF da ${number.text}`)
-    pdf.append(link)
+    actions.append(link)
   }
-  tr.append(pdf)
+  if (canCancel(nota)) {
+    const cancel = text('a', 'Cancelar')
+    cancel.href = notaHash(nota.id, { cancelar: true })
+    cancel.setAttribute('aria-label', `Cancelar a ${number.text}`)
+    actions.append(cancel)
+  }
+  tr.append(actions)
   return tr
+}
+
+/**
+ * Brings the list row of a nota in line with its new state, whether the row came with the first page or with Carregar mais.
+ * Under a status filter a nota whose status no longer matches leaves the list (D-19), the cursor staying where it was so Carregar
+ * mais keeps paging; otherwise the row is replaced in place (D-14).
+ */
+const patchRow = (nota) => {
+  const row = [...body.children].find((tr) => tr.dataset.id === nota.id)
+  if (!row) return
+  if (view.status && view.status !== nota.status) {
+    row.remove()
+    if (body.children.length === 0) say('Nenhuma nota encontrada.')
+  } else row.replaceWith(renderRow(nota))
 }
 
 /** Shows a message in the status line, or hides the line when there is none. */
@@ -107,9 +127,11 @@ const say = (message) => {
  * retires responses of older loads (a filter change bumps it, so an in-flight page of the old filter is never appended).
  * `nota` is the id the dialog shows ('' when closed), taken from the URL hash, and `dialogGeneration` retires the response of
  * a nota the admin has already left. `jaEmitida` is the #...&ja-emitida flag of the open nota (the form was sent with an id that was
- * already issued) and `current` the nota last rendered, so a change of the flag re-renders without fetching again.
+ * already issued) and `current` the nota last rendered, so a change of the flag re-renders without fetching again. `cancel` is the
+ * #...&cancelar flag: the cancel section is showing; `cancelDraft` is what the admin chose and typed there ({ id, code, reason }),
+ * kept while the section is drawn again for the same nota; `cancelling` holds the ids whose cancel request is in flight.
  */
-const view = { status: null, last: null, generation: 0, nota: '', dialogGeneration: 0, jaEmitida: false, current: null }
+const view = { status: null, last: null, generation: 0, nota: '', dialogGeneration: 0, jaEmitida: false, current: null, cancel: false, cancelDraft: null, cancelling: new Set() }
 
 /** Loads one page of the current filter: the newest one (replacing the rows) or, appending, the page after the last row shown. */
 const loadPage = async ({ append }) => {
@@ -124,7 +146,7 @@ const loadPage = async ({ append }) => {
   more.disabled = true
   table.setAttribute('aria-busy', 'true')
   try {
-    const { notas } = await api(listQuery({ status: view.status, last: append ? view.last : undefined }))
+    const { notas } = await api.get(listQuery({ status: view.status, last: append ? view.last : undefined }))
     if (generation !== view.generation) return
     body.append(...notas.map(renderRow))
     if (notas.length > 0) view.last = { createdAt: notas[notas.length - 1].createdAt, id: notas[notas.length - 1].id }
@@ -142,6 +164,136 @@ const loadPage = async ({ append }) => {
   }
 }
 
+/** The hash of the open nota without the cancel flag, keeping the ja-emitida one: what Voltar and a finished cancel go back to. */
+const plainHash = (id) => notaHash(id, { jaEmitida: view.jaEmitida })
+
+/** Voltar: closes the cancel section without sending anything, forgets the draft and leaves #nota=<id>. */
+const closeCancel = (id) => {
+  view.cancel = false
+  view.cancelDraft = null
+  history.replaceState(null, '', location.pathname + location.search + plainHash(id))
+  if (view.current) renderNota(view.current)
+}
+
+/**
+ * Confirmar cancelamento (D-13, D-14): the only place a cancellation is sent. The row is patched from any answer that carries
+ * the nota, even when the admin left the dialog meanwhile; the dialog is touched only while it still shows the same nota.
+ */
+const confirmCancel = async (id, { code, reason, state, confirm }) => {
+  if (view.cancelling.has(id)) return
+  const problem = reasonProblem(reason.value)
+  if (problem) {
+    state.textContent = problem
+    reason.setAttribute('aria-invalid', 'true')
+    reason.setAttribute('aria-describedby', 'cancel-state')
+    return
+  }
+  view.cancelling.add(id)
+  const generation = view.dialogGeneration
+  state.textContent = ''
+  confirm.disabled = true
+  confirm.setAttribute('aria-busy', 'true')
+  try {
+    const answer = await api.request('POST', `/v1/notas/${encodeURIComponent(id)}/cancel`, { reasonCode: code.value, reason: reason.value.trim() })
+    const nota = answer.body
+    const isNota = Boolean(nota) && typeof nota === 'object' && nota.id === id && typeof nota.status === 'string'
+    if (isNota) patchRow(nota)
+    if (generation !== view.dialogGeneration) return
+    if (answer.status === 200 && isNota && nota.status === 'canceled') {
+      view.cancel = false
+      view.cancelDraft = null
+      view.jaEmitida = false
+      view.current = nota
+      history.replaceState(null, '', location.pathname + location.search + notaHash(id))
+      renderNota(nota)
+    } else if (answer.status === 422 && isNota) {
+      // The government refused: show its cancelErrors under the section, which stays open with the draft.
+      view.current = nota
+      renderNota(nota)
+    } else {
+      state.textContent = cancelProblem(answer.status, nota)
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message === 'unauthorized') return
+    if (generation === view.dialogGeneration) state.textContent = cancelProblem(0, null)
+  } finally {
+    view.cancelling.delete(id)
+    const button = document.getElementById('cancel-confirm')
+    if (button && view.nota === id) {
+      button.disabled = false
+      button.removeAttribute('aria-busy')
+    }
+  }
+}
+
+/** The cancel section of a nota: summary, reason code and text, Confirmar cancelamento and Voltar. Built from buttons only, never a form, so Enter cannot send it. */
+const cancelSection = (nota) => {
+  const section = document.createElement('section')
+  section.id = 'cancel-form'
+  section.setAttribute('aria-labelledby', 'cancel-title')
+  const title = text('h3', 'Cancelar esta nota')
+  title.id = 'cancel-title'
+  const summary = text('p', `${numberCell(nota).text} · ${takerCell(nota.request.taker).name} · ${formatBrl(nota.request.valueCents)}`)
+
+  const codeLabel = text('label', 'Motivo')
+  codeLabel.htmlFor = 'cancel-code'
+  const code = document.createElement('select')
+  code.id = 'cancel-code'
+  for (const reasonCode of CANCEL_REASONS) {
+    const option = text('option', `${reasonCode.code} – ${reasonCode.label}`)
+    option.value = reasonCode.code
+    code.append(option)
+  }
+  const draft = view.cancelDraft?.id === nota.id ? view.cancelDraft : null
+  code.value = draft?.code ?? '2'
+
+  const reasonLabel = text('label', 'Descrição do motivo')
+  reasonLabel.htmlFor = 'cancel-reason'
+  const reason = document.createElement('textarea')
+  reason.id = 'cancel-reason'
+  reason.maxLength = 255
+  reason.rows = 3
+  reason.value = draft ? draft.reason : cancelSuggestion(code.value)
+
+  const state = text('p', '')
+  state.id = 'cancel-state'
+  state.setAttribute('role', 'status')
+
+  const saveDraft = () => {
+    view.cancelDraft = { id: nota.id, code: code.value, reason: reason.value }
+  }
+  let previous = code.value
+  // A new code swaps the suggestion only while the text is still the previous suggestion (or empty): the admin's own words stay.
+  code.addEventListener('change', () => {
+    if (reason.value === '' || reason.value === cancelSuggestion(previous)) reason.value = cancelSuggestion(code.value)
+    previous = code.value
+    saveDraft()
+  })
+  reason.addEventListener('input', () => {
+    saveDraft()
+    if (reason.getAttribute('aria-invalid') === 'true') {
+      reason.removeAttribute('aria-invalid')
+      if (state.textContent === reasonProblem('')) state.textContent = ''
+    }
+  })
+
+  const confirm = text('button', 'Confirmar cancelamento')
+  confirm.type = 'button'
+  confirm.id = 'cancel-confirm'
+  confirm.setAttribute('data-danger', '')
+  confirm.disabled = view.cancelling.has(nota.id)
+  const back = text('button', 'Voltar')
+  back.type = 'button'
+  back.id = 'cancel-back'
+  back.className = 'secondary'
+
+  confirm.addEventListener('click', () => confirmCancel(nota.id, { code, reason, state, confirm }))
+  back.addEventListener('click', () => closeCancel(nota.id))
+
+  section.append(title, summary, codeLabel, code, reasonLabel, reason, state, confirm, back)
+  return section
+}
+
 /** Renders what the dialog shows for a nota that was fetched. */
 const renderNota = (nota) => {
   const number = numberCell(nota)
@@ -150,10 +302,12 @@ const renderNota = (nota) => {
   label.dataset.status = nota.status
   dialogStatus.replaceChildren(label)
 
+  const cancelable = canCancel(nota)
   const parts = []
   if (view.jaEmitida) parts.push(note(ALREADY_ISSUED_NOTICE))
   const notice = statusNotice(nota)
   if (notice) parts.push(note(notice))
+  if (view.cancel && cancelable) parts.push(cancelSection(nota))
   for (const box of errorBoxes(nota)) parts.push(errorSection(box))
   for (const hint of issueHints(nota)) parts.push(note(hint))
   for (const { title, rows } of detailSections(nota)) {
@@ -165,6 +319,13 @@ const renderNota = (nota) => {
     parts.push(section)
   }
   dialogBody.replaceChildren(...parts)
+
+  if (cancelable && !view.cancel) {
+    const link = text('a', 'Cancelar')
+    link.href = notaHash(nota.id, { cancelar: true, jaEmitida: view.jaEmitida })
+    link.setAttribute('role', 'button')
+    dialogActions.replaceChildren(link)
+  } else dialogActions.replaceChildren()
 }
 
 /** The prefixes a link in the dialog may start with: a nota's hash, the same-origin PDF route, an https page. Anything else is shown as plain text. */
@@ -196,9 +357,10 @@ const openNota = async (id) => {
   dialogTitle.textContent = 'Carregando nota…'
   dialogStatus.replaceChildren()
   dialogBody.replaceChildren()
+  dialogActions.replaceChildren()
   if (!dialog.open) dialog.showModal()
   try {
-    const nota = await api(`/v1/notas/${encodeURIComponent(id)}`)
+    const nota = await api.get(`/v1/notas/${encodeURIComponent(id)}`)
     if (generation !== view.dialogGeneration) return
     view.current = nota
     renderNota(nota)
@@ -218,17 +380,20 @@ const sync = () => {
     loadPage({ append: false })
   }
   const id = parseNotaHash(location.hash)
-  const { jaEmitida } = parseNotaFlags(location.hash)
+  const { cancelar, jaEmitida } = parseNotaFlags(location.hash)
   if (id !== view.nota) {
     view.nota = id
     view.jaEmitida = jaEmitida
+    view.cancel = cancelar
+    view.cancelDraft = null
     if (id) openNota(id)
     else if (dialog.open) {
       view.dialogGeneration++
       dialog.close()
     }
-  } else if (id && jaEmitida !== view.jaEmitida) {
+  } else if (id && (jaEmitida !== view.jaEmitida || cancelar !== view.cancel)) {
     view.jaEmitida = jaEmitida
+    view.cancel = cancelar
     if (view.current) renderNota(view.current)
   }
 }
@@ -238,14 +403,23 @@ dialog.addEventListener('close', () => {
   if (dialog.open) return
   view.nota = ''
   view.jaEmitida = false
+  view.cancel = false
+  view.cancelDraft = null
   view.current = null
   view.dialogGeneration++
   if (parseNotaHash(location.hash) !== '') history.replaceState(null, '', location.pathname + location.search)
 })
 
-// A click on the dialog element itself lands on the backdrop (the article fills the rest): close like Fechar (D-13).
+// A click on the dialog element itself lands on the backdrop (the article fills the rest): close like Fechar (D-13), but only
+// when the press started on the backdrop too, so a text selection dragged out of the reason field never closes the dialog.
+let pressedOnBackdrop = false
+dialog.addEventListener('mousedown', (event) => {
+  pressedOnBackdrop = event.target === dialog
+})
 dialog.addEventListener('click', (event) => {
-  if (event.target === dialog) dialog.close()
+  const closes = event.target === dialog && pressedOnBackdrop
+  pressedOnBackdrop = false
+  if (closes) dialog.close()
 })
 
 select.addEventListener('change', () => {

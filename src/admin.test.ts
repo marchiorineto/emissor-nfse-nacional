@@ -498,9 +498,9 @@ describe('panel security headers', () => {
     expect(body).toContain('<h2 id="nota-title"></h2>')
     expect(body).toContain('<p id="nota-status"></p>')
     expect(body).toContain('<div id="nota-body"></div>')
-    expect(body).toContain('<form method="dialog"><button>Fechar</button></form>')
+    expect(body).toMatch(/<div id="nota-actions"><\/div>\s*<form method="dialog"><button>Fechar<\/button><\/form>/)
     expect(body).toMatch(
-      /<th[^>]*>Competência<\/th>\s*<th[^>]*>Cliente<\/th>\s*<th[^>]*>Valor<\/th>\s*<th[^>]*>Número<\/th>\s*<th[^>]*>Situação<\/th>\s*<th[^>]*>PDF<\/th>/,
+      /<th[^>]*>Competência<\/th>\s*<th[^>]*>Cliente<\/th>\s*<th[^>]*>Valor<\/th>\s*<th[^>]*>Número<\/th>\s*<th[^>]*>Situação<\/th>\s*<th[^>]*>Ações<\/th>/,
     )
   })
 
@@ -526,6 +526,14 @@ describe('panel security headers', () => {
     expect(PANEL_CSS).toMatch(/#emitir \[data-errors\] h3[^{]*\{[^}]*--pico-del-color/)
     expect(PANEL_CSS).toMatch(/#emitir small\[id\$="-error"\][^{]*\{[^}]*--pico-del-color/)
     expect(PANEL_CSS).toMatch(/#emitir \[role="note"\]/)
+  })
+
+  it('styles the cancel action in /panel.css', () => {
+    expect(PANEL_CSS).toMatch(/button\[data-danger\][^{]*\{[^}]*--pico-del-color/)
+    expect(PANEL_CSS).toMatch(/#nota-dialog footer \{[^}]*display: flex/)
+    expect(PANEL_CSS).toMatch(/#nota-actions \{[^}]*display: flex/)
+    expect(PANEL_CSS).toMatch(/#cancel-form \{[^}]*border-top/)
+    expect(PANEL_CSS).toMatch(/td\[data-label="Ações"\][^{]*\{[^}]*margin-inline-end: 0\.75rem/)
   })
 
   it('shows login and refusals as one narrow centered card', async () => {

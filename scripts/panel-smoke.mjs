@@ -260,6 +260,9 @@ const detail = await scenario({ notas: detailFixtures() })
 // The issue form: an empty repo and a government stub that issues, with the XML it was sent.
 const issuingGov = scriptedGov()
 const issuing = await scenario({ gov: issuingGov.gov })
+// The cancel action: the list fixtures (every issued nota has an access key) and a government stub whose events the checks script.
+const cancelingGov = scriptedGov()
+const canceling = await scenario({ notas: fixtures(), gov: cancelingGov.gov })
 
 // (c) The real login: the cookie Chrome gets is the one the server issued.
 const loginRes = await fetch(`${main.origin}/login`, {
@@ -745,7 +748,7 @@ await check('dialog-close', async () => {
   await waitFor(`document.querySelectorAll('#notas-body tr').length === 20`)
   await openFromRow()
   assert(await dialogOpen(), 'the dialog did not open from the row link')
-  await evaluate(`document.querySelector('#nota-dialog form button').click()`)
+  await evaluate(`document.querySelector('#nota-dialog footer form button').click()`)
   await waitFor(`!document.getElementById('nota-dialog').open && location.hash === ''`)
   assert(!(await evaluate('location.href')).endsWith('#'), 'closing left a bare # in the URL')
   await openFromRow()
@@ -908,7 +911,7 @@ await check('dialog-scroll-lock', async () => {
   assert((await overflow()) !== 'hidden', `the page is locked with no dialog open (overflow ${await overflow()})`)
   await openFromRow()
   assert((await overflow()) === 'hidden', `the page behind the dialog is not locked (overflow ${await overflow()})`)
-  await evaluate(`document.querySelector('#nota-dialog form button').click()`)
+  await evaluate(`document.querySelector('#nota-dialog footer form button').click()`)
   await waitFor(`!document.getElementById('nota-dialog').open`)
   assert((await overflow()) !== 'hidden', `the page stays locked after closing (overflow ${await overflow()})`)
 })
@@ -979,7 +982,7 @@ await check('emitir-issue', async () => {
   assert(JSON.stringify(sortKeys(JSON.parse(post.body))) === JSON.stringify(sortKeys(expected)), `the POST body is ${post.body}`)
   assert(issuingGov.sent.length === 1, `the government was sent ${issuingGov.sent.length} DPS, expected 1`)
 
-  await evaluate(`document.querySelector('#nota-dialog form button').click()`)
+  await evaluate(`document.querySelector('#nota-dialog footer form button').click()`)
   await waitFor(`!document.getElementById('nota-dialog').open`)
   await evaluate(`document.querySelector('a[href="/admin/emitir"]').click()`)
   await waitFor(`location.pathname === '/admin/emitir' && /^\\?id=painel-/.test(location.search) && document.readyState === 'complete'`)
@@ -1211,6 +1214,267 @@ await check('emitir-narrow', async () => {
   assert(narrow.page <= 375, `the page scrolls sideways: scrollWidth ${narrow.page} at 375 px`)
   assert(narrow.border !== '0px', `the errors box has no left accent (border-left-width ${narrow.border})`)
   await shot('emitir-narrow.png')
+  await viewport(1280, false)
+})
+
+/** The POSTs the server recorded for a scenario that went to a cancel route. */
+const cancelPosts = (served) => served.posts.filter((post) => post.method === 'POST' && /^\/v1\/notas\/[^/]+\/cancel$/.test(post.path))
+
+/** The list row of a nota, found by comparing dataset.id (never through a selector built from the id), as an expression. */
+const rowOf = (id) => `[...document.querySelectorAll('#notas-body tr')].find((tr) => tr.dataset.id === ${JSON.stringify(id)})`
+
+await check('cancel-row', async () => {
+  await viewport(1280, false)
+  await goto(`${canceling.origin}/admin`)
+  await waitFor(`document.querySelectorAll('#notas-body tr').length === 20`)
+  await clickMore()
+  await waitFor(`document.querySelectorAll('#notas-body tr').length === 40`)
+  const value = await evaluate(`${rowOf('n170')}.children[2].textContent`)
+  const offered = await evaluate(`[...document.querySelectorAll('#notas-body tr')].map((tr) => [tr.dataset.status, Boolean(tr.querySelector('a[href$="&cancelar"]'))])`)
+  for (const [status, link] of offered) assert(link === (status === 'issued'), `a ${status} row ${link ? 'has' : 'lacks'} the Cancelar link`)
+  const header = await evaluate(`[...document.querySelectorAll('#notas thead th')].map((th) => th.textContent).pop()`)
+  assert(header === 'Ações', `the last column is "${header}"`)
+
+  const before = { posts: cancelPosts(canceling).length, events: cancelingGov.eventsSent.length }
+  await evaluate(`${rowOf('n170')}.querySelector('a[href$="&cancelar"]').click()`)
+  await waitFor(`document.getElementById('nota-dialog').open && document.querySelector('#nota-dialog section#cancel-form')`)
+  assert((await evaluate('location.hash')) === '#nota=n170&cancelar', `the hash is ${await evaluate('location.hash')}`)
+  const summary = await evaluate(`document.querySelector('#cancel-form p').textContent`)
+  for (const part of ['NFS-e 70', 'Cliente 30', value]) assert(summary.includes(part), `the summary "${summary}" lacks "${part}"`)
+  assert((await evaluate(`document.getElementById('cancel-code').value`)) === '2', 'the reason code does not start on 2')
+  assert((await evaluate(`document.getElementById('cancel-reason').value`)) === 'Serviço não prestado; valor devolvido ao cliente', 'the reason text is not the code 2 suggestion')
+  assert((await evaluate(`document.querySelectorAll('#nota-dialog form').length`)) === 1, 'the dialog has a form besides the Fechar one')
+  assert(cancelPosts(canceling).length === before.posts, 'a cancel was sent before the confirmation')
+
+  // A nota that cannot be canceled shows no Cancelar in the footer.
+  await evaluate(`location.hash = '#nota=n197'`)
+  await waitFor(`document.getElementById('nota-status').textContent === 'Pendente'`)
+  assert((await evaluate(`document.getElementById('nota-actions').children.length`)) === 0, 'a pending nota has an action in the footer')
+  await evaluate(`location.hash = '#nota=n170&cancelar'`)
+  await waitFor(`document.querySelector('#nota-dialog section#cancel-form')`)
+  assert(cancelPosts(canceling).length === before.posts, 'a cancel was sent before the confirmation')
+
+  await evaluate(`document.getElementById('cancel-confirm').click()`)
+  await waitFor(`document.getElementById('nota-status').textContent === 'Cancelada' && !document.getElementById('cancel-form')`)
+  assert((await evaluate('location.hash')) === '#nota=n170', `the hash after the cancel is ${await evaluate('location.hash')}`)
+  const row = await evaluate(`(() => { const tr = ${rowOf('n170')}; return { status: tr.dataset.status, label: tr.children[4].textContent, link: Boolean(tr.querySelector('a[href$="&cancelar"]')) } })()`)
+  assert(row.status === 'canceled' && row.label === 'Cancelada' && !row.link, `the n170 row is ${JSON.stringify(row)}`)
+  assert((await evaluate(`document.querySelectorAll('#notas-body tr').length`)) === 40, 'the list lost rows after the cancel')
+  const sent = cancelPosts(canceling).slice(before.posts)
+  assert(sent.length === 1 && sent[0].path === '/v1/notas/n170/cancel', `expected one POST to /v1/notas/n170/cancel, saw ${sent.map((post) => post.path).join()}`)
+  assert((sent[0].headers['x-csrf-token'] ?? '') !== '', 'the cancel POST has no x-csrf-token')
+  assert(JSON.stringify(sortKeys(JSON.parse(sent[0].body))) === JSON.stringify({ reason: 'Serviço não prestado; valor devolvido ao cliente', reasonCode: '2' }), `the cancel body is ${sent[0].body}`)
+  assert(cancelingGov.eventsSent.length === before.events + 1, `the government received ${cancelingGov.eventsSent.length - before.events} event(s), expected 1`)
+  assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
+})
+
+/** Opens a nota of the canceling scenario by deep link and waits until its dialog is filled. */
+const openCancelable = async (id, flags = '') => {
+  await goto(`${canceling.origin}/admin#nota=${encodeURIComponent(id)}${flags}`)
+  await waitFor(`document.getElementById('nota-dialog').open && !/^Carregando/.test(document.getElementById('nota-title').textContent)`)
+}
+
+/** Picks a reason code in the cancel section the way a user does (change event), and types a reason (input event). */
+const chooseCode = (code) => evaluate(`(() => { const el = document.getElementById('cancel-code'); el.value = ${JSON.stringify(code)}; el.dispatchEvent(new Event('change', { bubbles: true })) })()`)
+const typeReason = (value) => evaluate(`(() => { const el = document.getElementById('cancel-reason'); el.value = ${JSON.stringify(value)}; el.dispatchEvent(new Event('input', { bubbles: true })) })()`)
+const reasonValue = () => evaluate(`document.getElementById('cancel-reason').value`)
+const cancelState = () => evaluate(`document.getElementById('cancel-state')?.textContent ?? null`)
+const dialogHash = () => evaluate('location.hash')
+
+await check('cancel-nothing-sent', async () => {
+  await viewport(1280, false)
+  const before = { posts: canceling.posts.length, events: cancelingGov.eventsSent.length }
+  await openCancelable('n174')
+  assert((await evaluate(`document.querySelector('#cancel-form')`)) === null, 'the section shows without the flag')
+  await evaluate(`document.querySelector('#nota-actions a').click()`)
+  await waitFor(`document.querySelector('#nota-dialog section#cancel-form')`)
+  assert((await dialogHash()).endsWith('&cancelar'), `the hash after the footer Cancelar is ${await dialogHash()}`)
+  assert((await evaluate(`document.querySelectorAll('#nota-actions a').length`)) === 0, 'the footer still offers Cancelar while the section shows')
+  await chooseCode('9')
+  assert((await reasonValue()) === 'Cancelamento solicitado pelo emitente', `code 9 gives "${await reasonValue()}"`)
+  await typeReason('Cliente desistiu da compra antes do curso')
+  await chooseCode('1')
+  assert((await reasonValue()) === 'Cliente desistiu da compra antes do curso', 'changing the code replaced the typed reason')
+  await evaluate(`document.getElementById('cancel-back').click()`)
+  await waitFor(`!document.getElementById('cancel-form')`)
+  assert((await dialogHash()) === '#nota=n174', `Voltar left the hash ${await dialogHash()}`)
+  assert(await dialogOpen(), 'Voltar closed the dialog')
+
+  await evaluate(`document.querySelector('#nota-actions a').click()`)
+  await waitFor(`document.querySelector('#nota-dialog section#cancel-form')`)
+  assert((await reasonValue()) === 'Serviço não prestado; valor devolvido ao cliente', 'the section did not start fresh after Voltar')
+  await typeReason('curto')
+  await evaluate(`document.getElementById('cancel-confirm').click()`)
+  await waitFor(`document.getElementById('cancel-state').textContent === 'O motivo deve ter de 15 a 255 caracteres.'`)
+  assert((await evaluate(`document.getElementById('cancel-reason').getAttribute('aria-invalid')`)) === 'true', 'the reason is not marked invalid')
+  await evaluate(`document.getElementById('cancel-reason').focus()`)
+  await pressKey('Enter', 'Enter', 13)
+  await pressKey('Escape', 'Escape', 27)
+  await waitFor(`!document.getElementById('nota-dialog').open && location.hash === ''`)
+
+  await openCancelable('n188', '&cancelar')
+  assert((await evaluate(`Boolean(document.querySelector('#nota-dialog section#cancel-form'))`)) === true, 'the deep link with the flag does not show the section')
+  await evaluate(`document.querySelector('#nota-dialog footer form button').click()`)
+  await waitFor(`!document.getElementById('nota-dialog').open && location.hash === ''`)
+  await openCancelable('n197', '&cancelar')
+  assert((await evaluate(`document.querySelector('#nota-dialog section#cancel-form')`)) === null, 'a pending nota shows the cancel section')
+  await settle()
+  assert(canceling.posts.length === before.posts, `${canceling.posts.length - before.posts} request(s) were sent without a confirmation`)
+  assert(cancelingGov.eventsSent.length === before.events, 'the government received an event without a confirmation')
+  assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
+})
+
+await check('cancel-answers', async () => {
+  await viewport(1280, false)
+  const before = { posts: cancelPosts(canceling).length, events: cancelingGov.eventsSent.length }
+  const typed = 'Motivo escrito pelo administrador'
+  await openCancelable('n168', '&cancelar')
+  await waitFor(`document.getElementById('cancel-form')`)
+  const title = await evaluate('document.title')
+
+  await typeReason(typed)
+  cancelingGov.events.push('refuse')
+  await evaluate(`document.getElementById('cancel-confirm').click()`)
+  await waitFor(`document.querySelector('#nota-body section[data-errors]')`)
+  assert((await evaluate(`document.querySelector('#nota-body section[data-errors] h3').textContent`)) === 'Erros no cancelamento', 'the errors box is not headed Erros no cancelamento')
+  const shown = await evaluate(`document.querySelector('#nota-body section[data-errors]').textContent`)
+  for (const part of ['E1235', 'Cancelamento fora do prazo', HOSTILE]) assert(shown.includes(part), `the cancel errors box lacks "${part}"`)
+  assert((await evaluate(`document.querySelectorAll('#nota-dialog img').length`)) === 0, 'an img element exists in the dialog')
+  assert((await evaluate('document.title')) === title, `document.title changed to "${await evaluate('document.title')}"`)
+  assert((await evaluate(`document.getElementById('nota-status').textContent`)) === 'Emitida', 'the dialog does not stay Emitida after a refusal')
+  assert((await evaluate(`Boolean(document.getElementById('cancel-form'))`)) === true, 'the section closed after a refusal')
+  assert((await reasonValue()) === typed, 'the typed reason was lost after a refusal')
+  assert((await evaluate(`document.getElementById('cancel-confirm').disabled`)) === false, 'the confirm button stays disabled after a refusal')
+
+  cancelingGov.events.push('unreached')
+  await evaluate(`document.getElementById('cancel-confirm').click()`)
+  await waitFor(`document.getElementById('cancel-state').textContent === 'O governo não respondeu. Tente de novo em alguns instantes.'`)
+  assert((await evaluate(`Boolean(document.getElementById('cancel-form'))`)) === true, 'the section closed after a 502')
+  assert((await reasonValue()) === typed, 'the typed reason was lost after a 502')
+
+  const stored = await canceling.repo.get('n168')
+  await canceling.repo.save({ ...stored, status: 'replaced' })
+  await evaluate(`document.getElementById('cancel-confirm').click()`)
+  await waitFor(`document.getElementById('cancel-state').textContent === 'Esta nota não pode ser cancelada: a situação dela é Substituída.'`)
+  assert((await evaluate(`document.getElementById('nota-status').textContent`)) === 'Emitida', 'the dialog changed after a 409')
+
+  await openCancelable('n166', '&cancelar')
+  await waitFor(`document.getElementById('cancel-form')`)
+  const respond = (status, body) => `window.fetch = () => Promise.resolve(new Response(${JSON.stringify(JSON.stringify(body))}, { status: ${status}, headers: { 'content-type': 'application/json' } }))`
+  try {
+    await evaluate(`window.__fetch = window.__fetch || window.fetch`)
+    await evaluate(respond(403, { error: 'invalid csrf token' }))
+    await evaluate(`document.getElementById('cancel-confirm').click()`)
+    await waitFor(`document.getElementById('cancel-state').textContent === 'A sessão mudou. Recarregue a página e tente de novo.'`)
+    await evaluate(`window.fetch = () => Promise.reject(new TypeError('Failed to fetch'))`)
+    await evaluate(`document.getElementById('cancel-confirm').click()`)
+    await waitFor(`document.getElementById('cancel-state').textContent === 'Não foi possível confirmar o resultado. Tente de novo: pedir o cancelamento outra vez não causa problema.'`)
+    assert((await evaluate(`document.getElementById('cancel-confirm').disabled`)) === false, 'the confirm button stays disabled after a lost answer')
+  } finally {
+    await evaluate(`window.fetch = window.__fetch`)
+  }
+  await evaluate(`document.getElementById('cancel-confirm').click()`)
+  await waitFor(`document.getElementById('nota-status').textContent === 'Cancelada' && !document.getElementById('cancel-form')`)
+
+  const sent = cancelPosts(canceling).slice(before.posts)
+  assert(sent.map((post) => post.path).join() === '/v1/notas/n168/cancel,/v1/notas/n168/cancel,/v1/notas/n168/cancel,/v1/notas/n166/cancel', `the cancel POSTs were ${sent.map((post) => post.path).join()}`)
+  assert(cancelingGov.eventsSent.length === before.events + 3, `the government received ${cancelingGov.eventsSent.length - before.events} event(s), expected 3`)
+  assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
+})
+
+await check('cancel-double-click', async () => {
+  const before = { posts: cancelPosts(canceling).length, events: cancelingGov.eventsSent.length }
+  await openCancelable('n164', '&cancelar')
+  await waitFor(`document.getElementById('cancel-form')`)
+  cancelingGov.events.push({ delayMs: 800 })
+  const disabled = await evaluate(`(() => { const button = document.getElementById('cancel-confirm'); button.click(); button.click(); return button.disabled })()`)
+  assert(disabled === true, 'the confirm button is not disabled while waiting')
+  await waitFor(`document.getElementById('nota-status').textContent === 'Cancelada' && !document.getElementById('cancel-form')`)
+  const sent = cancelPosts(canceling).slice(before.posts)
+  assert(sent.length === 1 && sent[0].path === '/v1/notas/n164/cancel', `two clicks recorded ${sent.length} POST(s), expected 1`)
+  assert(cancelingGov.eventsSent.length === before.events + 1, `two clicks sent ${cancelingGov.eventsSent.length - before.events} event(s), expected 1`)
+  assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
+})
+
+/** The ids of the rows shown, in order. */
+const rowIds = () => evaluate(`[...document.querySelectorAll('#notas-body tr')].map((tr) => tr.dataset.id)`)
+
+await check('cancel-filtered', async () => {
+  await viewport(1280, false)
+  await goto(`${canceling.origin}/admin?status=issued`)
+  await waitFor(`document.querySelectorAll('#notas-body tr').length === 20`)
+  const before = await rowIds()
+  const target = await evaluate(`[...document.querySelectorAll('#notas-body tr')].find((tr) => tr.querySelector('a[href$="&cancelar"]')).dataset.id`)
+  await evaluate(`${rowOf(target)}.querySelector('a[href$="&cancelar"]').click()`)
+  await waitFor(`document.querySelector('#nota-dialog section#cancel-form')`)
+  await evaluate(`document.getElementById('cancel-confirm').click()`)
+  await waitFor(`document.getElementById('nota-status').textContent === 'Cancelada' && !document.getElementById('cancel-form')`)
+  const after = await rowIds()
+  assert(after.length === before.length - 1, `the filtered list has ${after.length} rows after the cancel, expected ${before.length - 1}`)
+  assert(!after.includes(target), `the canceled row ${target} is still in the issued list`)
+  assert(after.join() === before.filter((id) => id !== target).join(), 'the other rows changed')
+  assert((await evaluate(`document.getElementById('more').hidden`)) === false, 'Carregar mais disappeared although the list had a full page')
+  await goto(`${canceling.origin}/admin`)
+  await waitFor(`document.querySelectorAll('#notas-body tr').length === 20`)
+  const row = await evaluate(`(() => { const tr = ${rowOf(target)}; return tr ? { status: tr.dataset.status, label: tr.children[4].textContent } : null })()`)
+  assert(row?.status === 'canceled' && row.label === 'Cancelada', `the unfiltered list shows ${JSON.stringify(row)} for ${target}`)
+  assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
+})
+
+await check('cancel-left-dialog', async () => {
+  await viewport(1280, false)
+  await goto(`${canceling.origin}/admin`)
+  await waitFor(`document.querySelectorAll('#notas-body tr').length === 20`)
+  await clickMore()
+  await waitFor(`document.querySelectorAll('#notas-body tr').length === 40`)
+  assert((await evaluate(`${rowOf('n162')}.dataset.status`)) === 'issued', 'n162 is not issued before the cancel')
+  cancelingGov.events.push({ delayMs: 800 })
+  await evaluate(`${rowOf('n162')}.querySelector('a[href$="&cancelar"]').click()`)
+  await waitFor(`document.querySelector('#nota-dialog section#cancel-form')`)
+  await evaluate(`document.getElementById('cancel-confirm').click()`)
+  await evaluate(`document.querySelector('#nota-dialog footer form button').click()`)
+  await waitFor(`!document.getElementById('nota-dialog').open && location.hash === ''`)
+  await waitFor(`${rowOf('n162')}.dataset.status === 'canceled'`)
+  assert((await evaluate(`${rowOf('n162')}.children[4].textContent`)) === 'Cancelada', 'the row does not say Cancelada')
+  assert(!(await dialogOpen()), 'the answer reopened the dialog')
+  assert((await evaluate(`document.getElementById('nota-status').textContent`)) !== 'Cancelada', 'the late answer was drawn into the closed dialog')
+  assert((await evaluate('location.hash')) === '', 'the late answer put a hash back in the URL')
+  assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
+})
+
+await check('cancel-backdrop-drag', async () => {
+  await viewport(1280, false)
+  await openCancelable('n160', '&cancelar')
+  await waitFor(`document.getElementById('cancel-form')`)
+  const typed = 'Motivo que o administrador acabou de escrever'
+  await typeReason(typed)
+  const point = await evaluate(`(() => { const el = document.getElementById('cancel-reason'); el.scrollIntoView({ block: 'center' }); const r = el.getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) } })()`)
+  const mouse = (type, x, y, buttons) => page('Input.dispatchMouseEvent', { type, x, y, button: type === 'mouseMoved' && !buttons ? 'none' : 'left', buttons, clickCount: type === 'mouseMoved' ? 0 : 1 })
+  await mouse('mousePressed', point.x, point.y, 1)
+  await mouse('mouseMoved', 5, 5, 1)
+  await mouse('mouseReleased', 5, 5, 0)
+  await settle()
+  assert(await dialogOpen(), 'a drag from the reason field to the backdrop closed the dialog')
+  assert((await reasonValue()) === typed, 'the drag changed the typed reason')
+  await mouse('mousePressed', 5, 5, 1)
+  await mouse('mouseReleased', 5, 5, 0)
+  await waitFor(`!document.getElementById('nota-dialog').open && location.hash === ''`)
+  assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
+})
+
+await check('cancel-style', async () => {
+  await viewport(1280, false)
+  await openCancelable('n158', '&cancelar')
+  await waitFor(`document.getElementById('cancel-form')`)
+  const colors = await evaluate(`({ confirm: getComputedStyle(document.getElementById('cancel-confirm')).backgroundColor, back: getComputedStyle(document.getElementById('cancel-back')).backgroundColor })`)
+  assert(!['transparent', 'rgba(0, 0, 0, 0)'].includes(colors.confirm), `the confirm button background is ${colors.confirm}`)
+  assert(colors.confirm !== colors.back, `the confirm and Voltar buttons share the background ${colors.confirm}`)
+  await shot('cancel-wide.png')
+  await viewport(375, true)
+  const narrow = await evaluate(`(() => { const article = document.querySelector('#nota-dialog article'); return { page: document.documentElement.scrollWidth, scroll: article.scrollWidth, client: article.clientWidth } })()`)
+  assert(narrow.page <= 375, `the page scrolls sideways: scrollWidth ${narrow.page} at 375 px`)
+  assert(narrow.scroll <= narrow.client, `the dialog article overflows: scrollWidth ${narrow.scroll} > clientWidth ${narrow.client}`)
+  await shot('cancel-narrow.png')
   await viewport(1280, false)
 })
 

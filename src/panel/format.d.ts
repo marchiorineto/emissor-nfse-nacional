@@ -50,6 +50,19 @@ export function parseNotaFlags(hash: string): { cancelar: boolean; jaEmitida: bo
 /** The notice the dialog shows first when the form was sent with an id that already belongs to an issued nota. */
 export const ALREADY_ISSUED_NOTICE: string
 
+/** One reason the cancel form offers: the API code, its label and the text the reason field starts with. */
+export type CancelReason = { code: '1' | '2' | '9'; label: string; suggestion: string }
+/** The cancel reasons the API accepts, in the order the form offers them. */
+export const CANCEL_REASONS: readonly CancelReason[]
+/** The suggested reason text of a cancel code, or '' for any other value. */
+export function cancelSuggestion(code: string): string
+/** Whether the panel offers Cancelar: an issued nota that has an access key. */
+export function canCancel(nota: Pick<NotaView, 'status' | 'accessKey'>): boolean
+/** The problem with a cancel reason (15 to 255 characters after trimming), or '' when it is fine. */
+export function reasonProblem(text: string): string
+/** The pt-BR message for a cancel answer that did not cancel; status 0 means the request got no answer. */
+export function cancelProblem(status: number, body: unknown): string
+
 /** A value of a detail row: plain text, or a link (a #nota= hash, the same-origin PDF path or an https URL) with its text. */
 export type DetailValue = string | { text: string; href: string; download?: string; external?: boolean }
 /** One titled block of the details dialog: label and value rows, in display order. */

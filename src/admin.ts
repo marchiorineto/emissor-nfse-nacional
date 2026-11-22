@@ -184,6 +184,40 @@ html:has(dialog[open]) {
 #nota-status [data-status="pending"] {
   color: var(--pico-muted-color);
 }
+#nota-dialog button[data-danger] {
+  background-color: var(--pico-del-color, #c62828);
+  border-color: var(--pico-del-color, #c62828);
+  color: var(--pico-primary-inverse, #fff);
+}
+#nota-dialog footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--pico-spacing, 1rem);
+}
+#nota-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pico-spacing, 1rem);
+}
+#nota-dialog footer button,
+#nota-dialog footer [role="button"] {
+  margin-bottom: 0;
+}
+#cancel-form {
+  border-top: var(--pico-border-width, 1px) solid var(--pico-muted-border-color, #ccc);
+  padding: var(--pico-spacing, 1rem) 0;
+  margin-bottom: var(--pico-spacing, 1rem);
+}
+#cancel-form button {
+  display: inline-block;
+  width: auto;
+  margin: 0 var(--pico-spacing, 1rem) 0 0;
+}
+#notas-body td[data-label="Ações"] a {
+  display: inline-block;
+  margin-inline-end: 0.75rem;
+}
 @media (max-width: 767px) {
   #nota-dialog dl {
     grid-template-columns: 1fr;
@@ -326,7 +360,7 @@ const adminPage = (cnpj: string, environment: string, csrf: string): Html =>
               <th scope="col" role="columnheader">Valor</th>
               <th scope="col" role="columnheader">Número</th>
               <th scope="col" role="columnheader">Situação</th>
-              <th scope="col" role="columnheader">PDF</th>
+              <th scope="col" role="columnheader">Ações</th>
             </tr>
           </thead>
           <tbody id="notas-body"></tbody>
@@ -341,6 +375,7 @@ const adminPage = (cnpj: string, environment: string, csrf: string): Html =>
           </header>
           <div id="nota-body"></div>
           <footer>
+            <div id="nota-actions"></div>
             <form method="dialog"><button>Fechar</button></form>
           </footer>
         </article>

@@ -3,6 +3,10 @@ import type { Taker } from '../dps.ts'
 import {
   ALREADY_ISSUED_NOTICE,
   brasiliaDay,
+  canCancel,
+  CANCEL_REASONS,
+  cancelProblem,
+  cancelSuggestion,
   countryName,
   detailSections,
   errorBoxes,
@@ -23,6 +27,7 @@ import {
   parseStatus,
   pdfFilename,
   pdfHref,
+  reasonProblem,
   STATUS_ORDER,
   statusLabel,
   statusNotice,
@@ -498,5 +503,67 @@ describe('statusNotice', () => {
   it('has no notice for issued and rejected', () => {
     expect(statusNotice(nota({ status: 'issued' }))).toBeUndefined()
     expect(statusNotice(nota({ status: 'rejected' }))).toBeUndefined()
+  })
+})
+
+describe('cancel reasons', () => {
+  it('offers codes 1, 2 and 9 with their labels, and a suggestion of 15 to 255 characters each', () => {
+    expect(CANCEL_REASONS.map((reason) => reason.code)).toEqual(['1', '2', '9'])
+    expect(CANCEL_REASONS.map((reason) => reason.label)).toEqual(['Erro na emissão', 'Serviço não prestado', 'Outros'])
+    expect(CANCEL_REASONS.find((reason) => reason.code === '2')?.suggestion).toBe('Serviço não prestado; valor devolvido ao cliente')
+    for (const { suggestion } of CANCEL_REASONS) {
+      expect(suggestion.trim().length).toBeGreaterThanOrEqual(15)
+      expect(suggestion.trim().length).toBeLessThanOrEqual(255)
+    }
+  })
+
+  it('gives the suggestion of a code, and nothing for an unknown code', () => {
+    expect(cancelSuggestion('9')).toBe(CANCEL_REASONS[2]?.suggestion)
+    expect(cancelSuggestion('x')).toBe('')
+  })
+})
+
+describe('canCancel', () => {
+  it('is true only for an issued nota with an access key', () => {
+    expect(canCancel(nota({ status: 'issued', accessKey: '4'.repeat(50) }))).toBe(true)
+    expect(canCancel(nota({ status: 'issued' }))).toBe(false)
+    for (const status of ['canceled', 'rejected', 'pending', 'unknown', 'replaced'] as const) {
+      expect(canCancel(nota({ status, accessKey: '4'.repeat(50) }))).toBe(false)
+    }
+  })
+})
+
+describe('reasonProblem', () => {
+  const message = 'O motivo deve ter de 15 a 255 caracteres.'
+
+  it('accepts 15 to 255 characters and refuses a shorter or longer reason', () => {
+    expect(reasonProblem('a'.repeat(14))).toBe(message)
+    expect(reasonProblem('a'.repeat(15))).toBe('')
+    expect(reasonProblem('a'.repeat(255))).toBe('')
+    expect(reasonProblem('a'.repeat(256))).toBe(message)
+  })
+
+  it('trims the text before counting', () => {
+    expect(reasonProblem(`   ${'a'.repeat(14)}   `)).toBe(message)
+    expect(reasonProblem(`   ${'a'.repeat(15)}   `)).toBe('')
+  })
+})
+
+describe('cancelProblem', () => {
+  it('says the government did not answer for a 502', () => {
+    expect(cancelProblem(502, { error: 'government did not answer; try again' })).toBe('O governo não respondeu. Tente de novo em alguns instantes.')
+  })
+
+  it('names the status of a nota that cannot be canceled for a 409', () => {
+    expect(cancelProblem(409, { error: 'nota is replaced, not issued' })).toBe('Esta nota não pode ser cancelada: a situação dela é Substituída.')
+    expect(cancelProblem(409, { error: 'other' })).toBe('Esta nota não pode ser cancelada: ela não está emitida.')
+  })
+
+  it('has a pt-BR message for 404, 400, 403, a lost answer and any other status', () => {
+    expect(cancelProblem(404, { error: 'nota not found' })).toBe('Nota não encontrada.')
+    expect(cancelProblem(400, { error: 'reasonCode: 1, 2 or 9' })).toBe('O motivo foi recusado. Escolha um dos motivos da lista.')
+    expect(cancelProblem(403, { error: 'invalid csrf token' })).toBe('A sessão mudou. Recarregue a página e tente de novo.')
+    expect(cancelProblem(0, null)).toBe('Não foi possível confirmar o resultado. Tente de novo: pedir o cancelamento outra vez não causa problema.')
+    expect(cancelProblem(500, null)).toBe('Não foi possível cancelar agora. Tente de novo.')
   })
 })
