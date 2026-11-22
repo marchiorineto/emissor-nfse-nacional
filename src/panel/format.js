@@ -117,6 +117,19 @@ export const parseNotaFlags = (hash) => {
 /** What the dialog says first when the form was sent with an id whose nota was already issued (D-09). */
 export const ALREADY_ISSUED_NOTICE = 'Esta nota já foi emitida com este id.'
 
+/** The cancel reasons the API accepts (D-12), in the order the select offers them, each with the text the reason field starts with. */
+export const CANCEL_REASONS = [
+  { code: '1', label: 'Erro na emissão', suggestion: 'Nota emitida com erro; será emitida novamente corrigida' },
+  { code: '2', label: 'Serviço não prestado', suggestion: 'Serviço não prestado; valor devolvido ao cliente' },
+  { code: '9', label: 'Outros', suggestion: 'Cancelamento solicitado pelo emitente' },
+]
+
+/** The suggested reason text of a cancel code, or '' for a code that is not offered. */
+export const cancelSuggestion = (code) => CANCEL_REASONS.find((reason) => reason.code === code)?.suggestion ?? ''
+
+/** Whether the panel offers Cancelar for a nota: only an issued one that has an access key (D-11). */
+export const canCancel = (nota) => nota.status === 'issued' && Boolean(nota.accessKey)
+
 const dateTime = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', dateStyle: 'short', timeStyle: 'short' })
 
 /** An instant as DD/MM/YYYY, HH:MM in America/Sao_Paulo; text that is not a date (issuedAt can be the government's own date text) comes back as given. */

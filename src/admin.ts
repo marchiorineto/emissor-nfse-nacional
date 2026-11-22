@@ -326,7 +326,7 @@ const adminPage = (cnpj: string, environment: string, csrf: string): Html =>
               <th scope="col" role="columnheader">Valor</th>
               <th scope="col" role="columnheader">Número</th>
               <th scope="col" role="columnheader">Situação</th>
-              <th scope="col" role="columnheader">PDF</th>
+              <th scope="col" role="columnheader">Ações</th>
             </tr>
           </thead>
           <tbody id="notas-body"></tbody>
@@ -341,6 +341,7 @@ const adminPage = (cnpj: string, environment: string, csrf: string): Html =>
           </header>
           <div id="nota-body"></div>
           <footer>
+            <div id="nota-actions"></div>
             <form method="dialog"><button>Fechar</button></form>
           </footer>
         </article>

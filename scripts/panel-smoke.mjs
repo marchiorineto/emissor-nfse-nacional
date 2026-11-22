@@ -260,6 +260,9 @@ const detail = await scenario({ notas: detailFixtures() })
 // The issue form: an empty repo and a government stub that issues, with the XML it was sent.
 const issuingGov = scriptedGov()
 const issuing = await scenario({ gov: issuingGov.gov })
+// The cancel action: the list fixtures (every issued nota has an access key) and a government stub whose events the checks script.
+const cancelingGov = scriptedGov()
+const canceling = await scenario({ notas: fixtures(), gov: cancelingGov.gov })
 
 // (c) The real login: the cookie Chrome gets is the one the server issued.
 const loginRes = await fetch(`${main.origin}/login`, {
@@ -745,7 +748,7 @@ await check('dialog-close', async () => {
   await waitFor(`document.querySelectorAll('#notas-body tr').length === 20`)
   await openFromRow()
   assert(await dialogOpen(), 'the dialog did not open from the row link')
-  await evaluate(`document.querySelector('#nota-dialog form button').click()`)
+  await evaluate(`document.querySelector('#nota-dialog footer form button').click()`)
   await waitFor(`!document.getElementById('nota-dialog').open && location.hash === ''`)
   assert(!(await evaluate('location.href')).endsWith('#'), 'closing left a bare # in the URL')
   await openFromRow()
@@ -908,7 +911,7 @@ await check('dialog-scroll-lock', async () => {
   assert((await overflow()) !== 'hidden', `the page is locked with no dialog open (overflow ${await overflow()})`)
   await openFromRow()
   assert((await overflow()) === 'hidden', `the page behind the dialog is not locked (overflow ${await overflow()})`)
-  await evaluate(`document.querySelector('#nota-dialog form button').click()`)
+  await evaluate(`document.querySelector('#nota-dialog footer form button').click()`)
   await waitFor(`!document.getElementById('nota-dialog').open`)
   assert((await overflow()) !== 'hidden', `the page stays locked after closing (overflow ${await overflow()})`)
 })
@@ -979,7 +982,7 @@ await check('emitir-issue', async () => {
   assert(JSON.stringify(sortKeys(JSON.parse(post.body))) === JSON.stringify(sortKeys(expected)), `the POST body is ${post.body}`)
   assert(issuingGov.sent.length === 1, `the government was sent ${issuingGov.sent.length} DPS, expected 1`)
 
-  await evaluate(`document.querySelector('#nota-dialog form button').click()`)
+  await evaluate(`document.querySelector('#nota-dialog footer form button').click()`)
   await waitFor(`!document.getElementById('nota-dialog').open`)
   await evaluate(`document.querySelector('a[href="/admin/emitir"]').click()`)
   await waitFor(`location.pathname === '/admin/emitir' && /^\\?id=painel-/.test(location.search) && document.readyState === 'complete'`)
@@ -1212,6 +1215,57 @@ await check('emitir-narrow', async () => {
   assert(narrow.border !== '0px', `the errors box has no left accent (border-left-width ${narrow.border})`)
   await shot('emitir-narrow.png')
   await viewport(1280, false)
+})
+
+/** The POSTs the server recorded for a scenario that went to a cancel route. */
+const cancelPosts = (served) => served.posts.filter((post) => post.method === 'POST' && /^\/v1\/notas\/[^/]+\/cancel$/.test(post.path))
+
+/** The list row of a nota, found by comparing dataset.id (never through a selector built from the id), as an expression. */
+const rowOf = (id) => `[...document.querySelectorAll('#notas-body tr')].find((tr) => tr.dataset.id === ${JSON.stringify(id)})`
+
+await check('cancel-row', async () => {
+  await viewport(1280, false)
+  await goto(`${canceling.origin}/admin`)
+  await waitFor(`document.querySelectorAll('#notas-body tr').length === 20`)
+  await clickMore()
+  await waitFor(`document.querySelectorAll('#notas-body tr').length === 40`)
+  const value = await evaluate(`${rowOf('n170')}.children[2].textContent`)
+  const offered = await evaluate(`[...document.querySelectorAll('#notas-body tr')].map((tr) => [tr.dataset.status, Boolean(tr.querySelector('a[href$="&cancelar"]'))])`)
+  for (const [status, link] of offered) assert(link === (status === 'issued'), `a ${status} row ${link ? 'has' : 'lacks'} the Cancelar link`)
+  const header = await evaluate(`[...document.querySelectorAll('#notas thead th')].map((th) => th.textContent).pop()`)
+  assert(header === 'Ações', `the last column is "${header}"`)
+
+  const before = { posts: cancelPosts(canceling).length, events: cancelingGov.eventsSent.length }
+  await evaluate(`${rowOf('n170')}.querySelector('a[href$="&cancelar"]').click()`)
+  await waitFor(`document.getElementById('nota-dialog').open && document.querySelector('#nota-dialog section#cancel-form')`)
+  assert((await evaluate('location.hash')) === '#nota=n170&cancelar', `the hash is ${await evaluate('location.hash')}`)
+  const summary = await evaluate(`document.querySelector('#cancel-form p').textContent`)
+  for (const part of ['NFS-e 70', 'Cliente 30', value]) assert(summary.includes(part), `the summary "${summary}" lacks "${part}"`)
+  assert((await evaluate(`document.getElementById('cancel-code').value`)) === '2', 'the reason code does not start on 2')
+  assert((await evaluate(`document.getElementById('cancel-reason').value`)) === 'Serviço não prestado; valor devolvido ao cliente', 'the reason text is not the code 2 suggestion')
+  assert((await evaluate(`document.querySelectorAll('#nota-dialog form').length`)) === 1, 'the dialog has a form besides the Fechar one')
+  assert(cancelPosts(canceling).length === before.posts, 'a cancel was sent before the confirmation')
+
+  // A nota that cannot be canceled shows no Cancelar in the footer.
+  await evaluate(`location.hash = '#nota=n197'`)
+  await waitFor(`document.getElementById('nota-status').textContent === 'Pendente'`)
+  assert((await evaluate(`document.getElementById('nota-actions').children.length`)) === 0, 'a pending nota has an action in the footer')
+  await evaluate(`location.hash = '#nota=n170&cancelar'`)
+  await waitFor(`document.querySelector('#nota-dialog section#cancel-form')`)
+  assert(cancelPosts(canceling).length === before.posts, 'a cancel was sent before the confirmation')
+
+  await evaluate(`document.getElementById('cancel-confirm').click()`)
+  await waitFor(`document.getElementById('nota-status').textContent === 'Cancelada' && !document.getElementById('cancel-form')`)
+  assert((await evaluate('location.hash')) === '#nota=n170', `the hash after the cancel is ${await evaluate('location.hash')}`)
+  const row = await evaluate(`(() => { const tr = ${rowOf('n170')}; return { status: tr.dataset.status, label: tr.children[4].textContent, link: Boolean(tr.querySelector('a[href$="&cancelar"]')) } })()`)
+  assert(row.status === 'canceled' && row.label === 'Cancelada' && !row.link, `the n170 row is ${JSON.stringify(row)}`)
+  assert((await evaluate(`document.querySelectorAll('#notas-body tr').length`)) === 40, 'the list lost rows after the cancel')
+  const sent = cancelPosts(canceling).slice(before.posts)
+  assert(sent.length === 1 && sent[0].path === '/v1/notas/n170/cancel', `expected one POST to /v1/notas/n170/cancel, saw ${sent.map((post) => post.path).join()}`)
+  assert((sent[0].headers['x-csrf-token'] ?? '') !== '', 'the cancel POST has no x-csrf-token')
+  assert(JSON.stringify(sortKeys(JSON.parse(sent[0].body))) === JSON.stringify({ reason: 'Serviço não prestado; valor devolvido ao cliente', reasonCode: '2' }), `the cancel body is ${sent[0].body}`)
+  assert(cancelingGov.eventsSent.length === before.events + 1, `the government received ${cancelingGov.eventsSent.length - before.events} event(s), expected 1`)
+  assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
 })
 
 await check('console-clean', async () => {
