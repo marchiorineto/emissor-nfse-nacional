@@ -355,7 +355,7 @@ listeners.push((message) => {
   if (method === 'Log.entryAdded' && ['security', 'javascript'].includes(params.entry.source)) record(`${params.entry.source}: ${params.entry.text}`)
   if (method === 'Runtime.exceptionThrown') record(`exception: ${params.exceptionDetails.text} ${params.exceptionDetails.exception?.description ?? ''}`)
   if (method === 'Network.requestWillBeSent' && new URL(params.request.url).pathname.startsWith('/v1/')) {
-    v1Requests.push({ requestId: params.requestId, url: new URL(params.request.url), headers: params.request.headers })
+    v1Requests.push({ requestId: params.requestId, method: params.request.method, url: new URL(params.request.url), headers: params.request.headers })
   }
   if (method === 'Network.requestWillBeSentExtraInfo') extraInfo.set(params.requestId, params.headers)
 })
@@ -1022,6 +1022,196 @@ await check('emitir-rejected', async () => {
   assert(numbers.length === 2 && numbers[0] !== undefined && numbers[0] === numbers[1], `the two DPS carry nDPS ${numbers.join(' and ')}`)
   assert(JSON.parse(issuing.posts[issuing.posts.length - 1].body).description === 'Aula de violão (corrigida)', 'the resent POST lacks the corrected description')
   assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
+})
+
+/** A form every rule accepts, apart from the id. */
+const VALID = { taxId: '11222333000181', name: 'Acme Ltda', serviceCode: '080201', description: 'Aula de violão', value: '1.234,56' }
+
+/** The text of the small that follows a field, or null when the field has no error shown. */
+const fieldError = (key) =>
+  evaluate(`(() => {
+    const el = document.getElementById('field-${key}')
+    const small = el.nextElementSibling
+    return el.getAttribute('aria-invalid') === 'true' && small?.tagName === 'SMALL' && small.id === 'field-${key}-error' ? small.textContent : null
+  })()`)
+
+/** Waits a moment, so a request the page should not have sent has time to show up on the server. */
+const settle = () => new Promise((resolve) => setTimeout(resolve, 300))
+
+await check('emitir-validation', async () => {
+  await viewport(1280, false)
+  await gotoRewritten(`${issuing.origin}/admin/emitir`)
+  await evaluate(`localStorage.removeItem('nfse-painel:servico')`)
+  await gotoRewritten(`${issuing.origin}/admin/emitir`)
+  const before = issuing.posts.length
+  await evaluate(`document.getElementById('emitir-submit').click()`)
+  await waitFor(`document.getElementById('field-value').getAttribute('aria-invalid') === 'true'`)
+  for (const key of ['serviceCode', 'description', 'value']) {
+    const message = await fieldError(key)
+    assert(message && /[a-zç]{4,}/i.test(message), `${key} shows no pt-BR error next to it ("${message}")`)
+  }
+  assert((await evaluate('document.activeElement.id')) === 'field-value', `the focus is on ${await evaluate('document.activeElement.id')}, expected the first invalid field (field-value)`)
+  await settle()
+  assert(issuing.posts.length === before, `an empty form sent ${issuing.posts.length - before} POST(s)`)
+
+  const tomorrow = new Date(`${todayBrasilia()}T00:00:00Z`)
+  tomorrow.setUTCDate(tomorrow.getUTCDate() + 1)
+  await fill({ value: '1234.56', competence: tomorrow.toISOString().slice(0, 10), taxId: '12345678900', name: '', phone: '123', serviceCode: '080201', description: 'Aula' })
+  await evaluate(`document.getElementById('emitir-submit').click()`)
+  await waitFor(`document.getElementById('field-phone').getAttribute('aria-invalid') === 'true'`)
+  for (const key of ['value', 'competence', 'taxId', 'name', 'phone']) assert(await fieldError(key), `${key} shows no error next to it`)
+  for (const key of ['serviceCode', 'description']) assert((await fieldError(key)) === null, `${key} still shows an error after it was fixed`)
+  await settle()
+  assert(issuing.posts.length === before, `an invalid form sent ${issuing.posts.length - before} POST(s)`)
+  await fill({ value: '1.234,56' })
+  assert((await fieldError('value')) === null && (await evaluate(`document.getElementById('field-value-error')`)) === null, 'typing in the value did not remove its error')
+  assert((await fieldError('taxId')) !== null, 'typing in the value removed the taxId error')
+  assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
+})
+
+await check('emitir-answers', async () => {
+  const id = 'painel-20261121-ans001'
+  await gotoRewritten(`${issuing.origin}/admin/emitir?id=${id}`)
+  await fill(VALID)
+  const answer = (status, body, raw) =>
+    `() => Promise.resolve(new Response(${raw ? JSON.stringify(raw) : `JSON.stringify(${JSON.stringify(body)})`}, { status: ${status}, headers: { 'content-type': 'application/json' } }))`
+  const lost = 'Não foi possível confirmar o resultado. Envie de novo: o mesmo identificador não gera uma segunda nota.'
+  const typed = await fieldValues()
+  const submitWith = async (impl) => {
+    await evaluate(`window.fetch = ${impl}`)
+    await evaluate(`document.getElementById('emitir-submit').click()`)
+    await waitFor(`!document.getElementById('emitir-submit').disabled && document.getElementById('emitir-state').textContent !== 'Enviando a nota…'`)
+    assert(JSON.stringify(await fieldValues()) === JSON.stringify(typed), 'the fields changed after the answer')
+    assert((await evaluate('location.search')) === `?id=${id}`, `the URL is now ${await evaluate('location.search')}`)
+    assert((await evaluate(`document.getElementById('emitir-submit').disabled`)) === false, 'the submit button stays disabled')
+    return evaluate(`document.getElementById('emitir-state').textContent`)
+  }
+  const before = issuing.posts.length
+  try {
+    const original = `window.__fetch = window.__fetch || window.fetch`
+    await evaluate(original)
+    const taxIdSaid = await submitWith(answer(400, { error: 'taker.taxId: a CPF or CNPJ (or taker.abroad for a taker outside Brazil)' }))
+    assert(taxIdSaid === 'Confira os campos destacados.', `400 status line is "${taxIdSaid}"`)
+    assert(/CPF/.test((await fieldError('taxId')) ?? ''), 'the 400 did not mark the taxId field with its pt-BR message')
+
+    const unknown400 = await submitWith(answer(400, { error: 'something new' }))
+    assert(unknown400 === 'A API recusou o pedido: something new', `an unknown 400 says "${unknown400}"`)
+
+    const stale = await submitWith(answer(403, { error: 'invalid csrf token' }))
+    assert(stale === 'A sessão mudou. Recarregue a página e envie de novo; o identificador continua o mesmo.', `403 says "${stale}"`)
+    assert((await evaluate(`[...document.querySelectorAll('#emitir-errors button')].map((b) => b.textContent).join()`)) === 'Recarregar', 'the 403 offers no Recarregar button')
+
+    assert((await submitWith(`() => Promise.reject(new TypeError('Failed to fetch'))`)) === lost, 'a network failure does not say the result is unknown')
+    assert((await submitWith(answer(502, null, '<html>bad gateway</html>'))) === lost, 'a 502 with an HTML body does not say the result is unknown')
+    assert((await submitWith(answer(500, { error: 'internal error' }))) === lost, 'a 500 does not say the result is unknown')
+  } finally {
+    await evaluate(`window.fetch = window.__fetch`)
+  }
+  await settle()
+  assert(issuing.posts.length === before, 'the scripted answers reached the server')
+  assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
+})
+
+await check('emitir-session-expired', async () => {
+  try {
+    await gotoRewritten(`${issuing.origin}/admin/emitir?id=painel-20261121-exp001`)
+    await fill(VALID)
+    await page('Network.deleteCookies', { name: 'nfse_admin', url: `${main.origin}/` })
+    await evaluate(`document.getElementById('emitir-submit').click()`)
+    await waitFor(`location.pathname === '/login'`, 5000)
+  } finally {
+    await page('Network.setCookie', { name: 'nfse_admin', value: cookie, url: `${main.origin}/`, httpOnly: true, sameSite: 'Strict' })
+  }
+})
+
+await check('emitir-double-click', async () => {
+  const id = 'painel-20261121-dbl001'
+  await gotoRewritten(`${issuing.origin}/admin/emitir?id=${id}`)
+  await fill(VALID)
+  const before = { posts: issuing.posts.length, sent: issuingGov.sent.length }
+  issuingGov.dps.push({ delayMs: 800 })
+  await evaluate(`(() => { const button = document.getElementById('emitir-submit'); button.click(); button.click() })()`)
+  assert((await evaluate(`document.getElementById('emitir-submit').disabled`)) === true, 'the submit button is not disabled while sending')
+  assert((await evaluate(`document.getElementById('emitir-form').getAttribute('aria-busy')`)) === 'true', 'the form is not aria-busy while sending')
+  await waitFor(`location.pathname === '/admin' && location.hash === ${JSON.stringify(`#${new URLSearchParams({ nota: id })}`)}`)
+  assert(issuing.posts.length === before.posts + 1, `two clicks recorded ${issuing.posts.length - before.posts} POST(s), expected 1`)
+  assert(issuingGov.sent.length === before.sent + 1, `two clicks sent ${issuingGov.sent.length - before.sent} DPS, expected 1`)
+})
+
+await check('emitir-two-tabs', async () => {
+  await gotoRewritten(`${issuing.origin}/admin/emitir`)
+  const before = issuingGov.sent.length
+  issuingGov.dps.push({ delayMs: 800 })
+  const answers = await evaluate(`(async () => {
+    const csrf = document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+    const body = JSON.stringify({ id: 'painel-20261121-tab001', competence: ${JSON.stringify(todayBrasilia())}, serviceCode: '080201', description: 'Aula', valueCents: 1000 })
+    const send = async () => {
+      const res = await fetch('/v1/notas', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json', 'x-csrf-token': csrf }, body })
+      const nota = await res.json()
+      return { status: res.status, dpsNumber: nota.dpsNumber, accessKey: nota.accessKey }
+    }
+    return Promise.all([send(), send()])
+  })()`)
+  assert(answers.every((a) => a.status === 200), `the two answers are ${answers.map((a) => a.status).join(' and ')}`)
+  assert(answers[0].dpsNumber === answers[1].dpsNumber && answers[0].accessKey === answers[1].accessKey && answers[0].accessKey, `the two answers differ: ${JSON.stringify(answers)}`)
+  assert(issuingGov.sent.length === before + 1, `the government received ${issuingGov.sent.length - before} DPS, expected 1`)
+})
+
+await check('emitir-resubmit', async () => {
+  const id = 'painel-20261121-dup001'
+  const hash = `#${new URLSearchParams({ nota: id })}`
+  await gotoRewritten(`${issuing.origin}/admin/emitir?id=${id}`)
+  await fill(VALID)
+  await evaluate(`document.getElementById('emitir-submit').click()`)
+  await waitFor(`location.pathname === '/admin' && location.hash === ${JSON.stringify(hash)}`)
+  await waitFor(`document.getElementById('nota-dialog').open && /^NFS-e \\d+$/.test(document.getElementById('nota-title').textContent)`)
+  // The Date header has a resolution of one second, so wait it out before the id is used again.
+  await new Promise((resolve) => setTimeout(resolve, 1300))
+
+  await gotoRewritten(`${issuing.origin}/admin/emitir?id=${id}`)
+  await fill({ ...VALID, value: '9,99', nbsCode: '123012100' })
+  const before = { posts: issuing.posts.length, sent: issuingGov.sent.length }
+  await evaluate(`document.getElementById('emitir-submit').click()`)
+  await waitFor(`location.pathname === '/admin' && location.hash === ${JSON.stringify(`${hash}&ja-emitida`)}`)
+  await waitFor(`document.getElementById('nota-dialog').open && /^NFS-e \\d+$/.test(document.getElementById('nota-title').textContent)`)
+  const first = await evaluate(`document.getElementById('nota-body').firstElementChild.textContent`)
+  assert(first === 'Esta nota já foi emitida com este id.', `the first note reads "${first}"`)
+  const valor = await evaluate(`[...document.querySelectorAll('#nota-body dt')].find((dt) => dt.textContent === 'Valor')?.nextElementSibling.textContent`)
+  assert(/^R\$\s1\.234,56$/.test(valor ?? ''), `the dialog shows Valor "${valor}", expected the stored R$ 1.234,56`)
+  assert(issuing.posts.length === before.posts + 1, `the second submit recorded ${issuing.posts.length - before.posts} POST(s), expected 1`)
+  assert(issuingGov.sent.length === before.sent, `the government received ${issuingGov.sent.length - before.sent} new DPS`)
+  const [firstRequest] = v1Requests
+  assert(firstRequest?.method === 'POST' && firstRequest.url.pathname === '/v1/notas', `the first request of the page was ${firstRequest?.method} ${firstRequest?.url.pathname}`)
+  assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
+})
+
+await check('emitir-defaults', async () => {
+  await gotoRewritten(`${issuing.origin}/admin/emitir`)
+  const values = await fieldValues()
+  assert(values['field-serviceCode'] === '080201' && values['field-nbsCode'] === '123012100' && values['field-description'] === 'Aula de violão', `the service fields are ${JSON.stringify(values)}`)
+  for (const key of ['taxId', 'name', 'email', 'phone', 'value']) assert(values[`field-${key}`] === '', `field ${key} was remembered ("${values[`field-${key}`]}")`)
+  const keys = await evaluate(`Object.keys(JSON.parse(localStorage.getItem('nfse-painel:servico'))).sort().join()`)
+  assert(keys === 'description,nbsCode,serviceCode', `the remembered keys are ${keys}`)
+  assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
+})
+
+await check('emitir-narrow', async () => {
+  await viewport(1280, false)
+  issuingGov.dps.push('reject')
+  await gotoRewritten(`${issuing.origin}/admin/emitir?id=painel-20261121-nar001`)
+  await fill(VALID)
+  await evaluate(`document.getElementById('emitir-submit').click()`)
+  await waitFor(`document.querySelector('#emitir-errors section[data-errors]')`)
+  await shot('emitir-wide.png')
+  await viewport(375, true)
+  const narrow = await evaluate(`(() => ({
+    page: document.documentElement.scrollWidth,
+    border: getComputedStyle(document.querySelector('#emitir-errors section[data-errors]')).borderLeftWidth,
+  }))()`)
+  assert(narrow.page <= 375, `the page scrolls sideways: scrollWidth ${narrow.page} at 375 px`)
+  assert(narrow.border !== '0px', `the errors box has no left accent (border-left-width ${narrow.border})`)
+  await shot('emitir-narrow.png')
+  await viewport(1280, false)
 })
 
 await check('console-clean', async () => {
