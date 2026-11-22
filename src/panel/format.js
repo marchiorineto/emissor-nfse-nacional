@@ -101,8 +101,21 @@ export const pdfFilename = (nota) => `nfse-${nota.nfseNumber ?? nota.dpsNumber}.
 /** The id a URL hash names (#nota=<id>), or '' when there is none; a malformed hash never throws. */
 export const parseNotaHash = (hash) => new URLSearchParams(hash.replace(/^#/, '')).get('nota') ?? ''
 
-/** The URL hash that opens a nota: '#nota=<id>', the id encoded by URLSearchParams so any character round-trips. */
-export const notaHash = (id) => `#${new URLSearchParams({ nota: id })}`
+/**
+ * The URL hash that opens a nota: '#nota=<id>', the id encoded by URLSearchParams so any character round-trips, then the literal
+ * suffixes '&cancelar' and '&ja-emitida' for the flags that are true (an encoded id can never contain a bare '&').
+ */
+export const notaHash = (id, { cancelar = false, jaEmitida = false } = {}) =>
+  `#${new URLSearchParams({ nota: id })}${cancelar ? '&cancelar' : ''}${jaEmitida ? '&ja-emitida' : ''}`
+
+/** The flags a URL hash carries next to the nota id; a malformed hash never throws. */
+export const parseNotaFlags = (hash) => {
+  const params = new URLSearchParams(hash.replace(/^#/, ''))
+  return { cancelar: params.has('cancelar'), jaEmitida: params.has('ja-emitida') }
+}
+
+/** What the dialog says first when the form was sent with an id whose nota was already issued (D-09). */
+export const ALREADY_ISSUED_NOTICE = 'Esta nota já foi emitida com este id.'
 
 const dateTime = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', dateStyle: 'short', timeStyle: 'short' })
 

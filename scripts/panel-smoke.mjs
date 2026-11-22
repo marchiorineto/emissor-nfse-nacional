@@ -145,6 +145,7 @@ const detailFixtures = () => {
     base('can', 5, 'canceled', { canceledAt: '2026-11-21T15:30:00Z' }),
     base('pend', 6, 'pending'),
     base('unk', 7, 'unknown'),
+    base('rej2xx', 8, 'rejected', { errors: [{ code: 'HTTP 200', message: '{"chaveAcesso":""}' }] }),
   ]
 }
 
@@ -813,6 +814,36 @@ await check('dialog-errors', async () => {
   for (const part of ['E0014', 'DPS duplicada', 'Complemento do erro', 'HTTP 403', HOSTILE]) assert(text.includes(part), `the error box lacks "${part}"`)
   const items = await evaluate(`document.querySelectorAll('#nota-body section[data-errors] li').length`)
   assert(items === 2, `${items} error entries, expected 2`)
+  assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
+})
+
+await check('dialog-already-issued', async () => {
+  await viewport(1280, false)
+  await goto(`${detail.origin}/admin#nota=both&ja-emitida`)
+  await waitFor(`document.getElementById('nota-dialog').open && !/^Carregando/.test(document.getElementById('nota-title').textContent)`)
+  const first = await evaluate(`(() => { const el = document.getElementById('nota-body').firstElementChild; return { tag: el.tagName, role: el.getAttribute('role'), text: el.textContent } })()`)
+  assert(first.tag === 'P' && first.role === 'note' && first.text === 'Esta nota já foi emitida com este id.', `the first block of the dialog is ${JSON.stringify(first)}`)
+  assert((await evaluate(`document.getElementById('nota-title').textContent`)) === 'NFS-e 302', 'the dialog does not show the stored nota')
+  await evaluate(`document.querySelector('#nota-dialog footer form button').click()`)
+  await waitFor(`!document.getElementById('nota-dialog').open && location.hash === ''`)
+  await goto(`${detail.origin}/admin#nota=both`)
+  await waitFor(`document.getElementById('nota-dialog').open && !/^Carregando/.test(document.getElementById('nota-title').textContent)`)
+  assert(!(await evaluate(`document.getElementById('nota-body').textContent`)).includes('Esta nota já foi emitida com este id.'), 'the notice shows without the flag')
+  assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
+})
+
+await check('dialog-rejected-hint', async () => {
+  const hint = 'O governo pode ter emitido esta nota'
+  await openDeepLink('rej2xx')
+  const found = await evaluate(`(() => {
+    const body = document.getElementById('nota-body')
+    const box = body.querySelector('section[data-errors]')
+    const note = [...body.querySelectorAll('[role="note"]')].find((el) => el.textContent.includes(${JSON.stringify(hint)}))
+    return { hasNote: Boolean(note), after: Boolean(note) && Boolean(box.compareDocumentPosition(note) & Node.DOCUMENT_POSITION_FOLLOWING) }
+  })()`)
+  assert(found.hasNote && found.after, `the hint is missing or not after the error box: ${JSON.stringify(found)}`)
+  await openDeepLink('rej')
+  assert(!(await evaluate(`document.getElementById('nota-body').textContent`)).includes(hint), 'the hint shows for a rejection without a 2xx code')
   assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
 })
 
