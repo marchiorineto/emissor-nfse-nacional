@@ -123,6 +123,15 @@ Out of this phase:
     one.
   - An unknown `de` shows "Nota não encontrada." and an empty form.
 
+### Decided after research (2026-11-22)
+- **D-18:** **Serialize `issue` and `cancel` per id on the server.** Research reproduced two concurrent
+  `POST /v1/notas` calls with the same id sending the DPS twice. Phase 3 adds a per-id lock in `src/notas.ts`, keyed by
+  the shared `repo` (not inside the per-request `createNotas` object), plus a concurrency regression test that asserts
+  one `sendDps`. This is internal behavior with no `/v1` contract change. It assumes one Node process owns the SQLite
+  file (research assumption A5).
+- **D-19:** **With a status filter active, a row whose status no longer matches after a cancel or retry is removed
+  from the list.** Without a filter, the row is patched in place (D-14).
+
 ### Claude's Discretion
 - How the panel code is split, for example `panel.js` plus `emitir.js` plus shared helpers in `format.js`. Pure helpers
   should be unit-tested like `src/panel/format.test.ts`. No build step. All API strings go into the DOM with
