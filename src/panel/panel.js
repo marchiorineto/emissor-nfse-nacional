@@ -102,10 +102,18 @@ const renderRow = (nota) => {
   return tr
 }
 
-/** Replaces the list row of a nota with a fresh one, in place, whether the row came with the first page or with Carregar mais. */
+/**
+ * Brings the list row of a nota in line with its new state, whether the row came with the first page or with Carregar mais.
+ * Under a status filter a nota whose status no longer matches leaves the list (D-19), the cursor staying where it was so Carregar
+ * mais keeps paging; otherwise the row is replaced in place (D-14).
+ */
 const patchRow = (nota) => {
   const row = [...body.children].find((tr) => tr.dataset.id === nota.id)
-  if (row) row.replaceWith(renderRow(nota))
+  if (!row) return
+  if (view.status && view.status !== nota.status) {
+    row.remove()
+    if (body.children.length === 0) say('Nenhuma nota encontrada.')
+  } else row.replaceWith(renderRow(nota))
 }
 
 /** Shows a message in the status line, or hides the line when there is none. */
@@ -402,9 +410,16 @@ dialog.addEventListener('close', () => {
   if (parseNotaHash(location.hash) !== '') history.replaceState(null, '', location.pathname + location.search)
 })
 
-// A click on the dialog element itself lands on the backdrop (the article fills the rest): close like Fechar (D-13).
+// A click on the dialog element itself lands on the backdrop (the article fills the rest): close like Fechar (D-13), but only
+// when the press started on the backdrop too, so a text selection dragged out of the reason field never closes the dialog.
+let pressedOnBackdrop = false
+dialog.addEventListener('mousedown', (event) => {
+  pressedOnBackdrop = event.target === dialog
+})
 dialog.addEventListener('click', (event) => {
-  if (event.target === dialog) dialog.close()
+  const closes = event.target === dialog && pressedOnBackdrop
+  pressedOnBackdrop = false
+  if (closes) dialog.close()
 })
 
 select.addEventListener('change', () => {

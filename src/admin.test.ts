@@ -528,6 +528,14 @@ describe('panel security headers', () => {
     expect(PANEL_CSS).toMatch(/#emitir \[role="note"\]/)
   })
 
+  it('styles the cancel action in /panel.css', () => {
+    expect(PANEL_CSS).toMatch(/button\[data-danger\][^{]*\{[^}]*--pico-del-color/)
+    expect(PANEL_CSS).toMatch(/#nota-dialog footer \{[^}]*display: flex/)
+    expect(PANEL_CSS).toMatch(/#nota-actions \{[^}]*display: flex/)
+    expect(PANEL_CSS).toMatch(/#cancel-form \{[^}]*border-top/)
+    expect(PANEL_CSS).toMatch(/td\[data-label="Ações"\][^{]*\{[^}]*margin-inline-end: 0\.75rem/)
+  })
+
   it('shows login and refusals as one narrow centered card', async () => {
     expect(PANEL_CSS).toMatch(/main\[data-card\] \{[^}]*place-items: center/)
     expect(PANEL_CSS).toMatch(/main\[data-card\] > article \{[^}]*max-width: 24rem/)
