@@ -259,6 +259,78 @@ describe('cancel', () => {
   })
 })
 
+describe('concurrent calls for one id', () => {
+  const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+
+  /** Two createNotas over one repo, as two requests would be (src/app.ts builds one per request). */
+  const twoRequests = () => {
+    const repo = createMemoryRepo()
+    const fake = createFakeGov()
+    const slow: Gov = { ...fake.gov, sendDps: async (host, xml) => (await sleep(50), fake.gov.sendDps(host, xml)) }
+    const make = () => createNotas({ repo, gov: slow, config, now: () => new Date('2026-11-12T15:00:00Z') })
+    return { repo, fake, first: make(), second: make() }
+  }
+
+  it('sends the DPS once when two requests share a repo, and both get the same nota', async () => {
+    const { fake, first, second } = twoRequests()
+    const [a, b] = await Promise.all([first.issue(request()), second.issue(request())])
+    expect(fake.sent).toHaveLength(1)
+    expect(a).toMatchObject({ status: 'issued', dpsNumber: 1 })
+    expect(b.accessKey).toBe(a.accessKey)
+    expect(b.dpsNumber).toBe(a.dpsNumber)
+  })
+
+  it('returns the stored nota for a third issue of the same id, without another send', async () => {
+    const { fake, first, second } = twoRequests()
+    const [a] = await Promise.all([first.issue(request()), second.issue(request())])
+    const third = await first.issue(request())
+    expect(third.accessKey).toBe(a.accessKey)
+    expect(fake.sent).toHaveLength(1)
+  })
+
+  it('does not serialize different ids: both sends start before either finishes', async () => {
+    const repo = createMemoryRepo()
+    const fake = createFakeGov()
+    let starts = 0
+    let open!: () => void
+    const gate = new Promise<'second-start'>((resolve) => (open = () => resolve('second-start')))
+    const releasedBy: string[] = []
+    const gov: Gov = {
+      ...fake.gov,
+      sendDps: async (host, xml) => {
+        if (++starts === 2) open()
+        const timer = sleep(1000).then(() => 'timer')
+        releasedBy.push(await Promise.race([gate, timer]))
+        return fake.gov.sendDps(host, xml)
+      },
+    }
+    const notas = createNotas({ repo, gov, config, now: () => new Date('2026-11-12T15:00:00Z') })
+    const results = await Promise.all([notas.issue(request({ id: 'a' })), notas.issue(request({ id: 'b' }))])
+    expect(results.map((nota) => nota.status)).toEqual(['issued', 'issued'])
+    expect(releasedBy).toEqual(['second-start', 'second-start'])
+  })
+
+  it('sends one cancellation event for two concurrent cancels, and both resolve canceled', async () => {
+    const { notas, fake } = setup()
+    const nota = await notas.issue(request())
+    let events = 0
+    const sendEvent = fake.gov.sendEvent
+    fake.gov.sendEvent = async (host, accessKey, xml) => (events++, await sleep(20), sendEvent(host, accessKey, xml))
+    const results = await Promise.all([notas.cancel(nota.id, {}), notas.cancel(nota.id, {})])
+    expect(events).toBe(1)
+    expect(results.map((canceled) => canceled.status)).toEqual(['canceled', 'canceled'])
+  })
+
+  it('lets a rejected call fail for its own caller and the next call for the same id run', async () => {
+    const { notas, fake } = setup()
+    const replaces = { id: 'missing', reasonCode: '99' as const, reason: 'Correção da moeda do serviço exportado' }
+    const [failed, issued] = await Promise.allSettled([notas.issue(request({ replaces })), notas.issue(request())])
+    expect(failed).toMatchObject({ status: 'rejected', reason: { status: 404 } })
+    expect(issued).toMatchObject({ status: 'fulfilled', value: { status: 'issued' } })
+    expect(fake.sent).toHaveLength(1)
+  })
+})
+
 describe('pdf', () => {
   it('renders the PDF from the XML when the government DANFSe service is down', async () => {
     const repo = createMemoryRepo()
