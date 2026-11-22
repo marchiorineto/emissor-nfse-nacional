@@ -397,7 +397,7 @@ describe('panel security headers', () => {
   it('serves the panel modules to a session as text/javascript with the panel headers, and 303 to /login without one', async () => {
     const app = setup()
     const { cookie } = await session(app)
-    for (const name of ['panel.js', 'format.js', 'api.js', 'form.js', 'emitir.js']) {
+    for (const name of ['panel.js', 'format.js', 'dom.js', 'api.js', 'form.js', 'emitir.js']) {
       const res = await app.request(`http://api.test/admin/${name}`, { headers: { cookie } })
       expect(res.status).toBe(200)
       expect(res.headers.get('content-type')).toBe('text/javascript; charset=utf-8')
@@ -408,7 +408,7 @@ describe('panel security headers', () => {
       expect(anonymous.headers.get('location')).toBe('/login')
       expectHeaders(anonymous)
     }
-    for (const name of ['format.d.ts', 'api.d.ts', 'form.d.ts', 'form.test.ts', 'nope.js']) {
+    for (const name of ['format.d.ts', 'api.d.ts', 'form.d.ts', 'form.test.ts', 'dom.test.ts', 'nope.js']) {
       expect((await app.request(`http://api.test/admin/${name}`, { headers: { cookie } })).status).toBe(404)
     }
   })
@@ -520,6 +520,14 @@ describe('panel security headers', () => {
     expect(PANEL_CSS).toMatch(/#nota-dialog dl \{[^}]*display: grid/)
   })
 
+  it('styles the issue form in /panel.css', () => {
+    expect(PANEL_CSS).toContain('#emitir [data-errors]')
+    expect(PANEL_CSS).toMatch(/#emitir \[data-errors\][^{]*\{[^}]*border-left: 0\.25rem solid var\(--pico-del-color/)
+    expect(PANEL_CSS).toMatch(/#emitir \[data-errors\] h3[^{]*\{[^}]*--pico-del-color/)
+    expect(PANEL_CSS).toMatch(/#emitir small\[id\$="-error"\][^{]*\{[^}]*--pico-del-color/)
+    expect(PANEL_CSS).toMatch(/#emitir \[role="note"\]/)
+  })
+
   it('shows login and refusals as one narrow centered card', async () => {
     expect(PANEL_CSS).toMatch(/main\[data-card\] \{[^}]*place-items: center/)
     expect(PANEL_CSS).toMatch(/main\[data-card\] > article \{[^}]*max-width: 24rem/)
@@ -585,7 +593,7 @@ describe('session cookie flags, expiry and edge cases', () => {
       await (await app.request('http://api.test/admin/panel.js', { headers: { cookie } })).text(),
       await (await app.request('http://api.test/admin/format.js', { headers: { cookie } })).text(),
       await (await app.request('http://api.test/admin/emitir', { headers: { cookie } })).text(),
-      ...(await Promise.all(['api.js', 'form.js', 'emitir.js'].map(async (name) => (await app.request(`http://api.test/admin/${name}`, { headers: { cookie } })).text()))),
+      ...(await Promise.all(['dom.js', 'api.js', 'form.js', 'emitir.js'].map(async (name) => (await app.request(`http://api.test/admin/${name}`, { headers: { cookie } })).text()))),
     ]
     for (const body of bodies) expect(body).not.toContain(TOKEN)
     expect(res.headers.get('set-cookie')).not.toContain(TOKEN)

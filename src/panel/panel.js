@@ -1,6 +1,7 @@
 // The panel's browser module: reads GET /v1/notas with the session cookie and renders the list.
 // Every API string reaches the DOM through textContent; nothing here ever parses markup or sets a style.
 import {
+  ALREADY_ISSUED_NOTICE,
   detailSections,
   errorBoxes,
   formatBrl,
@@ -10,6 +11,7 @@ import {
   listQuery,
   notaHash,
   numberCell,
+  parseNotaFlags,
   parseNotaHash,
   parseStatus,
   pdfFilename,
@@ -19,6 +21,8 @@ import {
   statusSearch,
   takerCell,
 } from './format.js'
+import { errorSection, note, text } from './dom.js'
+import { issueHints } from './form.js'
 
 const body = document.getElementById('notas-body')
 const state = document.getElementById('notas-state')
@@ -47,13 +51,6 @@ const cell = (label) => {
   td.setAttribute('role', 'cell')
   td.dataset.label = label
   return td
-}
-
-/** An element holding one piece of text. */
-const text = (tag, value) => {
-  const el = document.createElement(tag)
-  el.textContent = value
-  return el
 }
 
 /** One table row for a nota. */
@@ -109,9 +106,10 @@ const say = (message) => {
  * What the list shows now: the status filter taken from the URL, the cursor after the last row shown, and a counter that
  * retires responses of older loads (a filter change bumps it, so an in-flight page of the old filter is never appended).
  * `nota` is the id the dialog shows ('' when closed), taken from the URL hash, and `dialogGeneration` retires the response of
- * a nota the admin has already left.
+ * a nota the admin has already left. `jaEmitida` is the #...&ja-emitida flag of the open nota (the form was sent with an id that was
+ * already issued) and `current` the nota last rendered, so a change of the flag re-renders without fetching again.
  */
-const view = { status: null, last: null, generation: 0, nota: '', dialogGeneration: 0 }
+const view = { status: null, last: null, generation: 0, nota: '', dialogGeneration: 0, jaEmitida: false, current: null }
 
 /** Loads one page of the current filter: the newest one (replacing the rows) or, appending, the page after the last row shown. */
 const loadPage = async ({ append }) => {
@@ -153,26 +151,11 @@ const renderNota = (nota) => {
   dialogStatus.replaceChildren(label)
 
   const parts = []
+  if (view.jaEmitida) parts.push(note(ALREADY_ISSUED_NOTICE))
   const notice = statusNotice(nota)
-  if (notice) {
-    const note = text('p', notice)
-    note.setAttribute('role', 'note')
-    parts.push(note)
-  }
-  for (const box of errorBoxes(nota)) {
-    const section = document.createElement('section')
-    section.dataset.errors = ''
-    section.append(text('h3', box.heading))
-    const list = document.createElement('ul')
-    for (const error of box.errors) {
-      const item = document.createElement('li')
-      item.append(text('strong', error.code), ' ', error.message)
-      if (error.detail) item.append(' ', text('small', error.detail))
-      list.append(item)
-    }
-    section.append(list)
-    parts.push(section)
-  }
+  if (notice) parts.push(note(notice))
+  for (const box of errorBoxes(nota)) parts.push(errorSection(box))
+  for (const hint of issueHints(nota)) parts.push(note(hint))
   for (const { title, rows } of detailSections(nota)) {
     const section = document.createElement('section')
     section.append(text('h3', title))
@@ -209,6 +192,7 @@ const detailValue = (value) => {
 /** Opens the dialog on a nota: shows it at once as loading, then fills it with GET /v1/notas/<id>; a stale response is dropped. */
 const openNota = async (id) => {
   const generation = ++view.dialogGeneration
+  view.current = null
   dialogTitle.textContent = 'Carregando nota…'
   dialogStatus.replaceChildren()
   dialogBody.replaceChildren()
@@ -216,6 +200,7 @@ const openNota = async (id) => {
   try {
     const nota = await api(`/v1/notas/${encodeURIComponent(id)}`)
     if (generation !== view.dialogGeneration) return
+    view.current = nota
     renderNota(nota)
   } catch (error) {
     if (generation !== view.dialogGeneration) return
@@ -233,13 +218,18 @@ const sync = () => {
     loadPage({ append: false })
   }
   const id = parseNotaHash(location.hash)
+  const { jaEmitida } = parseNotaFlags(location.hash)
   if (id !== view.nota) {
     view.nota = id
+    view.jaEmitida = jaEmitida
     if (id) openNota(id)
     else if (dialog.open) {
       view.dialogGeneration++
       dialog.close()
     }
+  } else if (id && jaEmitida !== view.jaEmitida) {
+    view.jaEmitida = jaEmitida
+    if (view.current) renderNota(view.current)
   }
 }
 
@@ -247,6 +237,8 @@ const sync = () => {
 dialog.addEventListener('close', () => {
   if (dialog.open) return
   view.nota = ''
+  view.jaEmitida = false
+  view.current = null
   view.dialogGeneration++
   if (parseNotaHash(location.hash) !== '') history.replaceState(null, '', location.pathname + location.search)
 })

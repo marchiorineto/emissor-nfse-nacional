@@ -145,21 +145,31 @@ html:has(dialog[open]) {
   margin-left: 0;
   overflow-wrap: anywhere;
 }
-#nota-dialog [data-errors] {
-  border-left: 0.25rem solid var(--pico-del-color, currentColor);
-  padding: var(--pico-spacing);
-  margin-bottom: var(--pico-spacing);
+#nota-dialog [data-errors],
+#emitir [data-errors] {
+  border-left: 0.25rem solid var(--pico-del-color, #c62828);
+  padding: var(--pico-spacing, 1rem);
+  margin-bottom: var(--pico-spacing, 1rem);
 }
-#nota-dialog [data-errors] h3 {
-  color: var(--pico-del-color);
+#nota-dialog [data-errors] h3,
+#emitir [data-errors] h3 {
+  color: var(--pico-del-color, #c62828);
 }
-#nota-dialog [data-errors] ul {
+#nota-dialog [data-errors] ul,
+#emitir [data-errors] ul {
   margin-bottom: 0;
 }
-#nota-dialog [role="note"] {
+#nota-dialog [role="note"],
+#emitir [role="note"] {
   background-color: var(--pico-mark-background-color);
   color: var(--pico-mark-color);
-  padding: var(--pico-spacing);
+  padding: var(--pico-spacing, 1rem);
+}
+#emitir fieldset {
+  margin-bottom: var(--pico-spacing, 1rem);
+}
+#emitir small[id$="-error"] {
+  color: var(--pico-del-color, #c62828);
 }
 #nota-status [data-status="rejected"],
 #nota-status [data-status="unknown"] {
@@ -195,7 +205,7 @@ export const PAGE_CSP =
  * not a request) and served from /admin/ behind the session guard. Only these names are served; nothing else under src/ is.
  */
 export const PANEL_SCRIPTS: ReadonlyMap<string, string> = new Map(
-  ['panel.js', 'format.js', 'api.js', 'form.js', 'emitir.js'].map((name) => [name, readFileSync(new URL(`./panel/${name}`, import.meta.url), 'utf8')]),
+  ['panel.js', 'format.js', 'dom.js', 'api.js', 'form.js', 'emitir.js'].map((name) => [name, readFileSync(new URL(`./panel/${name}`, import.meta.url), 'utf8')]),
 )
 
 export interface AdminDeps {

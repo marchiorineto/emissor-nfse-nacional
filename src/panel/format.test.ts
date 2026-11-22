@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Taker } from '../dps.ts'
 import {
+  ALREADY_ISSUED_NOTICE,
   brasiliaDay,
   countryName,
   detailSections,
@@ -17,6 +18,7 @@ import {
   notaHash,
   numberCell,
   PAGE_SIZE,
+  parseNotaFlags,
   parseNotaHash,
   parseStatus,
   pdfFilename,
@@ -268,6 +270,47 @@ describe('parseNotaHash and notaHash', () => {
   it('round-trips an id with spaces, #, ?, %, / and an emoji', () => {
     const id = 'loja/1 #?%😀'
     expect(parseNotaHash(notaHash(id))).toBe(id)
+  })
+})
+
+describe('hash flags', () => {
+  it('appends &cancelar and &ja-emitida for the flags that are true, in that order', () => {
+    expect(notaHash('abc')).toBe('#nota=abc')
+    expect(notaHash('abc', {})).toBe('#nota=abc')
+    expect(notaHash('abc', { cancelar: true })).toBe('#nota=abc&cancelar')
+    expect(notaHash('abc', { jaEmitida: true })).toBe('#nota=abc&ja-emitida')
+    expect(notaHash('abc', { cancelar: true, jaEmitida: true })).toBe('#nota=abc&cancelar&ja-emitida')
+    expect(notaHash('abc', { cancelar: false, jaEmitida: false })).toBe('#nota=abc')
+  })
+
+  it('still reads the id with either flag present', () => {
+    for (const hash of ['#nota=abc&cancelar', '#nota=abc&ja-emitida', '#nota=abc&cancelar&ja-emitida']) expect(parseNotaHash(hash)).toBe('abc')
+  })
+
+  it('reads both flags', () => {
+    expect(parseNotaFlags('#nota=abc&cancelar')).toEqual({ cancelar: true, jaEmitida: false })
+    expect(parseNotaFlags('#nota=abc&ja-emitida')).toEqual({ cancelar: false, jaEmitida: true })
+    expect(parseNotaFlags('#nota=abc&cancelar&ja-emitida')).toEqual({ cancelar: true, jaEmitida: true })
+    expect(parseNotaFlags('')).toEqual({ cancelar: false, jaEmitida: false })
+    expect(parseNotaFlags('#nota=abc')).toEqual({ cancelar: false, jaEmitida: false })
+  })
+
+  it('counts a flag written with an empty value', () => {
+    expect(parseNotaFlags('#nota=abc&cancelar=')).toEqual({ cancelar: true, jaEmitida: false })
+  })
+
+  it('never throws on a malformed escape', () => {
+    expect(parseNotaFlags('#nota=%E0%A4%A&cancelar')).toEqual({ cancelar: true, jaEmitida: false })
+  })
+
+  it('does not mistake an id that contains &cancelar for the flag', () => {
+    const id = 'loja/1 #?%😀&cancelar'
+    expect(parseNotaFlags(notaHash(id))).toEqual({ cancelar: false, jaEmitida: false })
+    expect(parseNotaHash(notaHash(id))).toBe(id)
+  })
+
+  it('words the already-issued notice', () => {
+    expect(ALREADY_ISSUED_NOTICE).toBe('Esta nota já foi emitida com este id.')
   })
 })
 
