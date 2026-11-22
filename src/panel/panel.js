@@ -28,7 +28,7 @@ import {
 } from './format.js'
 import { pageApi } from './api.js'
 import { errorSection, note, text } from './dom.js'
-import { issueHints } from './form.js'
+import { duplicateHref, issueHints } from './form.js'
 
 const body = document.getElementById('notas-body')
 const state = document.getElementById('notas-state')
@@ -98,6 +98,10 @@ const renderRow = (nota) => {
     cancel.setAttribute('aria-label', `Cancelar a ${number.text}`)
     actions.append(cancel)
   }
+  const duplicate = text('a', 'Duplicar')
+  duplicate.href = duplicateHref(nota.id)
+  duplicate.setAttribute('aria-label', `Duplicar a ${number.text}`)
+  actions.append(duplicate)
   tr.append(actions)
   return tr
 }
@@ -320,12 +324,19 @@ const renderNota = (nota) => {
   }
   dialogBody.replaceChildren(...parts)
 
+  const actions = []
   if (cancelable && !view.cancel) {
     const link = text('a', 'Cancelar')
     link.href = notaHash(nota.id, { cancelar: true, jaEmitida: view.jaEmitida })
     link.setAttribute('role', 'button')
-    dialogActions.replaceChildren(link)
-  } else dialogActions.replaceChildren()
+    actions.push(link)
+  }
+  // Duplicar is offered for every status (D-15): it opens a new form, so it never touches this nota.
+  const duplicate = text('a', 'Duplicar')
+  duplicate.href = duplicateHref(nota.id)
+  duplicate.setAttribute('role', 'button')
+  actions.push(duplicate)
+  dialogActions.replaceChildren(...actions)
 }
 
 /** The prefixes a link in the dialog may start with: a nota's hash, the same-origin PDF route, an https page. Anything else is shown as plain text. */

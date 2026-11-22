@@ -174,6 +174,37 @@ export const issueHints = (nota) => {
   ]
 }
 
+/** Integer cents as the pt-BR number the value field takes: dot grouping and exactly two decimals, no currency symbol. */
+export const formatBrlInput = (cents) => {
+  const whole = String(Math.trunc(cents / 100)).replace(/\B(?=(\d{3})+(?!\d))/g, '.')
+  return `${whole},${String(cents % 100).padStart(2, '0')}`
+}
+
+/** The note shown above a duplicate form when the source nota had data this form cannot carry (D-15). */
+export const DROPPED_ABROAD_NOTICE = 'O tomador no exterior e os dados de exportação não foram copiados: este formulário emite só para tomador no Brasil.'
+
+/**
+ * The form fields a duplicate starts with, read from the source nota (D-15, D-16): service code, description and value always,
+ * the NBS code and the taker's CPF/CNPJ, name, e-mail and phone when present. The id and the competence are never copied (the form
+ * makes its own) and replaces is never read, so a duplicate can never replace its source. `dropped` is true when the source had a
+ * taker abroad or export data, which this form cannot carry.
+ */
+export const prefillFromNota = (nota) => {
+  const { request } = nota
+  const taker = request.taker
+  const fields = {
+    serviceCode: request.serviceCode,
+    ...(request.nbsCode ? { nbsCode: request.nbsCode } : {}),
+    description: request.description,
+    value: formatBrlInput(request.valueCents),
+    ...(taker?.taxId ? { taxId: taker.taxId, name: taker.name, ...(taker.email ? { email: taker.email } : {}), ...(taker.phone ? { phone: taker.phone } : {}) } : {}),
+  }
+  return { fields, dropped: Boolean(taker?.abroad) || Boolean(request.export) }
+}
+
+/** The address of the issue form filled from a nota: /admin/emitir?de=<id> (the form adds its own ?id=). */
+export const duplicateHref = (id) => '/admin/emitir?' + new URLSearchParams({ de: id })
+
 /** The localStorage key of the remembered service fields. */
 export const SERVICE_DEFAULTS_KEY = 'nfse-painel:servico'
 
