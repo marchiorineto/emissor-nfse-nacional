@@ -51,6 +51,25 @@ created: "2026-11-21"
 | ACT-02 (D-10) | `retryBody` strips `replaces.accessKey`; Tentar de novo refreshes dialog and row | unit + browser | `pnpm exec vitest run src/panel/form.test.ts`; smoke | ❌ W0 | ⬜ pending |
 | ACT-03 | `prefillFromNota` carries/drops the right fields; `?de=` prefill, new id, separate nota | unit + browser | `pnpm exec vitest run src/panel/form.test.ts`; smoke | ❌ W0 | ⬜ pending |
 
+Task-level map (from the PLAN.md files; the smoke command is `node --disable-warning=ExperimentalWarning scripts/panel-smoke.mjs`):
+
+| Task | Req | Decisions | Automated commands | Smoke checks added | Status |
+|------|-----|-----------|--------------------|--------------------|--------|
+| 03-01 T1 (tracer) | ACT-01 | D-18 | `pnpm exec vitest run src/app.test.ts src/notas.test.ts src/appSession.test.ts`; `pnpm run typecheck` | — | ⬜ pending |
+| 03-01 T2 | ACT-01, ACT-02 | D-18 | `pnpm exec vitest run src/notas.test.ts src/app.test.ts`; `pnpm test`; `pnpm run typecheck` | — | ⬜ pending |
+| 03-02 T1 (tracer) | ACT-01 | D-01, D-02, D-03, D-05, D-06, D-07, D-08 | smoke; `pnpm exec vitest run src/admin.test.ts src/panel/format.test.ts`; `pnpm run typecheck` | emitir-issue | ⬜ pending |
+| 03-02 T2 | ACT-01 | D-03, D-04, D-05, D-06, D-09 | `pnpm exec vitest run src/panel/form.test.ts`; `pnpm run typecheck` | — | ⬜ pending |
+| 03-02 T3 | ACT-01 | D-01, D-02 | `pnpm exec vitest run src/panel/api.test.ts src/admin.test.ts`; `pnpm test`; `pnpm run typecheck` | — | ⬜ pending |
+| 03-03 T1 (tracer) | ACT-01 | D-08 | smoke; `pnpm exec vitest run src/admin.test.ts src/panel` | emitir-rejected | ⬜ pending |
+| 03-03 T2 | ACT-01 | D-09, D-11 | `pnpm exec vitest run src/panel/format.test.ts src/panel/form.test.ts`; `pnpm run typecheck`; smoke | dialog-already-issued, dialog-rejected-hint | ⬜ pending |
+| 03-03 T3 | ACT-01 | D-02, D-04, D-08, D-09 | smoke; `pnpm test`; `pnpm run typecheck` | emitir-validation, emitir-answers, emitir-session-expired, emitir-double-click, emitir-two-tabs, emitir-resubmit, emitir-defaults, emitir-narrow | ⬜ pending |
+| 03-04 T1 (tracer) | ACT-02 | D-11, D-12, D-13, D-14 | smoke; `pnpm exec vitest run src/admin.test.ts src/panel` | cancel-row | ⬜ pending |
+| 03-04 T2 | ACT-02 | D-12, D-13, D-14 | `pnpm exec vitest run src/panel/format.test.ts`; `pnpm run typecheck`; smoke | cancel-nothing-sent, cancel-answers, cancel-double-click | ⬜ pending |
+| 03-04 T3 | ACT-02 | D-13, D-14, D-19 | smoke; `pnpm test`; `pnpm run typecheck` | cancel-filtered, cancel-left-dialog, cancel-backdrop-drag, cancel-style | ⬜ pending |
+| 03-05 T1 (tracer) | ACT-03 | D-15, D-16, D-17 | smoke; `pnpm exec vitest run src/panel src/admin.test.ts` | duplicate-row | ⬜ pending |
+| 03-05 T2 | ACT-01, ACT-03 | D-10, D-16, D-19 | `pnpm exec vitest run src/panel/form.test.ts`; `pnpm run typecheck`; smoke | retry-pending-replaces, retry-unanswered, retry-unknown, retry-filtered | ⬜ pending |
+| 03-05 T3 | ACT-03 | D-15, D-17 | smoke; `pnpm test`; `pnpm run typecheck` | duplicate-edges, duplicate-reload, row-actions-narrow | ⬜ pending |
+
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
 ---

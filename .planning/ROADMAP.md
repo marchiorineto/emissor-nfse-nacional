@@ -85,7 +85,21 @@ Plans:
   2. Submitting the form again with the same `id` (double click, reload) shows the nota already issued instead of creating a second one.
   3. The admin can cancel an issued nota by choosing the reason and confirming; nothing is sent before the confirmation, and afterwards the panel shows the canceled status or the government's cancel errors.
   4. The admin can duplicate a nota, which opens the issue form filled with that nota's data and a new suggested `id`, and submitting it issues a separate nota.
-**Plans**: TBD
+**Plans:** 5 plans
+
+Plans:
+**Wave 1**
+- [ ] 03-01-PLAN.md — Per-id server lock around issue and cancel (D-18) with concurrency regression tests and the single-process README note (wave 1)
+- [ ] 03-02-PLAN.md — Issue form tracer: /admin/emitir page and Emitir nota link, id in the URL, CSRF POST to /v1/notas, api.js and form.js helpers with tests, smoke harness with a scripted government (wave 1)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 03-03-PLAN.md — Issue form outcomes: government errors on the form, field errors, 400/403/401/lost answers, already-issued notice, remembered service fields, two-tab check (wave 2)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 03-04-PLAN.md — Cancel: row and dialog Cancelar, reason and confirmation, every answer handled, row patch and filter removal, danger styling (wave 3)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+- [ ] 03-05-PLAN.md — Duplicate from rows and dialog into a prefilled form with a new id, Tentar de novo for unanswered notas, row actions layout, README (wave 4)
 **UI hint**: yes
 
 ## Progress
@@ -97,4 +111,4 @@ Phases execute in numeric order: 1 → 2 → 3
 |-------|----------------|--------|-----------|
 | 1. Admin Password and Login | 6/6 | Complete    | 2026-11-21 |
 | 2. Notas Panel | 4/4 | Complete    | 2026-11-21 |
-| 3. Nota Actions | 0/TBD | Not started | - |
+| 3. Nota Actions | 0/5 | Not started | - |
