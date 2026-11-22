@@ -124,6 +124,28 @@ const govErrors = (status: number, json: Record<string, unknown>): GovError[] =>
   return [{ code: `HTTP ${status}`, message: (typeof answer.raw === 'string' ? answer.raw : JSON.stringify(answer)).slice(0, 500) }]
 }
 
+/**
+ * Tail of the chain of calls per nota id, one map per repo. It lives here and is keyed by the repo, not inside
+ * `createNotas`, because the app builds a new `createNotas` per request: only the shared repo ties two requests for one
+ * id together. Assumes one process owns the database; with several processes on one file this would not serialize.
+ */
+const locks = new WeakMap<Repo, Map<string, Promise<unknown>>>()
+
+/** Runs `fn` after every earlier call for the same id on this repo has settled; calls for other ids do not wait. */
+const serialized = <T>(repo: Repo, id: string, fn: () => Promise<T>): Promise<T> => {
+  let chains = locks.get(repo)
+  if (!chains) locks.set(repo, (chains = new Map()))
+  const tails = chains
+  // The previous call's failure belongs to its own caller; it must not stop this one.
+  const run = (tails.get(id) ?? Promise.resolve()).catch(() => undefined).then(fn)
+  tails.set(id, run)
+  const release = (): void => {
+    if (tails.get(id) === run) tails.delete(id)
+  }
+  run.then(release, release)
+  return run
+}
+
 export const createNotas = ({ repo, gov, config, now = () => new Date() }: { repo: Repo; gov: Gov; config: Config; now?: () => Date }): Notas => {
   const { sefin, adn } = hosts[config.environment]
 
@@ -220,46 +242,48 @@ export const createNotas = ({ repo, gov, config, now = () => new Date() }: { rep
     return send(await save(sending, { dpsNumber: await repo.nextNumber() }), collisions + 1)
   }
 
-  const issue = async (request: IssueRequest): Promise<Nota> => {
-    const existing = await repo.get(request.id)
-    if (existing?.status === 'issued') return markReplaced(existing)
-    if (existing?.status === 'canceled' || existing?.status === 'replaced') return existing
-    if (existing?.status === 'unknown') {
-      const found = await findIssued(existing)
-      if (typeof found === 'object') return markReplaced(await markIssued(existing, found.accessKey, found.nfseXml))
-      if (found === 'unreachable') return existing
-    }
-    const at = now().toISOString()
-    const isNewRequest = !existing || existing.status === 'rejected' || existing.status === 'pending'
-    const nota: Nota = existing
-      ? { ...existing, request: isNewRequest ? await resolveReplacement(request) : existing.request }
-      : { id: request.id, status: 'pending', request: await resolveReplacement(request), dpsNumber: await repo.nextNumber(), dpsId: '', createdAt: at, updatedAt: at }
-    if (!existing) await repo.save(nota)
-    return markReplaced(await send(nota))
-  }
-
-  const cancel: Notas['cancel'] = async (id, reason) => {
-    const nota = await repo.get(id)
-    if (!nota) throw notaError(404, 'nota not found')
-    if (nota.status === 'canceled') return nota
-    if (nota.status !== 'issued' || !nota.accessKey) throw notaError(409, `nota is ${nota.status}, not issued`)
-    const xml = buildCancellation({
-      environment: config.environment,
-      issuer: config.issuer,
-      accessKey: nota.accessKey,
-      at: new Date(now().getTime() - CLOCK_SKEW_MS),
-      reasonCode: reason.code ?? '2',
-      reason: reason.text ?? 'Venda cancelada e valor devolvido ao cliente',
+  const issue = (request: IssueRequest): Promise<Nota> =>
+    serialized(repo, request.id, async () => {
+      const existing = await repo.get(request.id)
+      if (existing?.status === 'issued') return markReplaced(existing)
+      if (existing?.status === 'canceled' || existing?.status === 'replaced') return existing
+      if (existing?.status === 'unknown') {
+        const found = await findIssued(existing)
+        if (typeof found === 'object') return markReplaced(await markIssued(existing, found.accessKey, found.nfseXml))
+        if (found === 'unreachable') return existing
+      }
+      const at = now().toISOString()
+      const isNewRequest = !existing || existing.status === 'rejected' || existing.status === 'pending'
+      const nota: Nota = existing
+        ? { ...existing, request: isNewRequest ? await resolveReplacement(request) : existing.request }
+        : { id: request.id, status: 'pending', request: await resolveReplacement(request), dpsNumber: await repo.nextNumber(), dpsId: '', createdAt: at, updatedAt: at }
+      if (!existing) await repo.save(nota)
+      return markReplaced(await send(nota))
     })
-    const result = await gov.sendEvent(sefin, nota.accessKey, xml)
-    if (!result.reached || result.status >= 500) throw notaError(502, 'government did not answer; try again')
-    if (result.status < 300) return save(nota, { status: 'canceled', canceledAt: now().toISOString(), cancelErrors: undefined })
-    const errors = govErrors(result.status, result.json)
-    if (errors.some((error) => ALREADY_CANCELED.test(`${error.message} ${error.detail ?? ''}`))) {
-      return save(nota, { status: 'canceled', canceledAt: now().toISOString(), cancelErrors: undefined })
-    }
-    return save(nota, { cancelErrors: errors })
-  }
+
+  const cancel: Notas['cancel'] = (id, reason) =>
+    serialized(repo, id, async () => {
+      const nota = await repo.get(id)
+      if (!nota) throw notaError(404, 'nota not found')
+      if (nota.status === 'canceled') return nota
+      if (nota.status !== 'issued' || !nota.accessKey) throw notaError(409, `nota is ${nota.status}, not issued`)
+      const xml = buildCancellation({
+        environment: config.environment,
+        issuer: config.issuer,
+        accessKey: nota.accessKey,
+        at: new Date(now().getTime() - CLOCK_SKEW_MS),
+        reasonCode: reason.code ?? '2',
+        reason: reason.text ?? 'Venda cancelada e valor devolvido ao cliente',
+      })
+      const result = await gov.sendEvent(sefin, nota.accessKey, xml)
+      if (!result.reached || result.status >= 500) throw notaError(502, 'government did not answer; try again')
+      if (result.status < 300) return save(nota, { status: 'canceled', canceledAt: now().toISOString(), cancelErrors: undefined })
+      const errors = govErrors(result.status, result.json)
+      if (errors.some((error) => ALREADY_CANCELED.test(`${error.message} ${error.detail ?? ''}`))) {
+        return save(nota, { status: 'canceled', canceledAt: now().toISOString(), cancelErrors: undefined })
+      }
+      return save(nota, { cancelErrors: errors })
+    })
 
   /** The government's DANFSe when its service answers; otherwise our rendering of the authorized XML. */
   const pdf: Notas['pdf'] = async (id) => {
