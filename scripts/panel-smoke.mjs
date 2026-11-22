@@ -1659,6 +1659,70 @@ await check('retry-filtered', async () => {
   assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
 })
 
+await check('duplicate-edges', async () => {
+  await viewport(1280, false)
+  const abroadNotice = 'O tomador no exterior e os dados de exportação não foram copiados: este formulário emite só para tomador no Brasil.'
+  await gotoRewritten(`${duplicating.origin}/admin/emitir?de=dup-abroad`)
+  await waitFor(`!document.getElementById('emitir-submit').disabled && document.getElementById('field-serviceCode').value !== ''`)
+  const title = await evaluate('document.title')
+  const shown = await evaluate(`(() => { const el = document.getElementById('emitir-form').previousElementSibling; return el && el.getAttribute('role') === 'note' ? el.textContent : null })()`)
+  assert(shown === abroadNotice, `the note before the form is ${JSON.stringify(shown)}`)
+  const abroad = await fieldValues()
+  for (const key of ['taxId', 'name', 'email', 'phone']) assert(abroad[`field-${key}`] === '', `field-${key} is "${abroad[`field-${key}`]}" for a taker abroad`)
+  const wanted = { 'field-nbsCode': '115022000', 'field-serviceCode': '080201', 'field-description': 'Aula de violão', 'field-value': '1.234,56' }
+  for (const [key, value] of Object.entries(wanted)) assert(abroad[key] === value, `${key} is "${abroad[key]}", expected "${value}"`)
+
+  await gotoRewritten(`${duplicating.origin}/admin/emitir?de=dup-hostile`)
+  await waitFor(`document.getElementById('field-name').value !== ''`)
+  assert((await evaluate(`document.getElementById('field-name').value`)) === HOSTILE, 'the hostile name is not in the field verbatim')
+  assert((await evaluate(`document.querySelectorAll('img').length`)) === 0, 'an img element exists in the page')
+  assert((await evaluate('document.title')) === title, `document.title changed to "${await evaluate('document.title')}"`)
+
+  await goto(`${duplicating.origin}/admin#nota=dup-can`)
+  await waitFor(`document.getElementById('nota-dialog').open && !/^Carregando/.test(document.getElementById('nota-title').textContent)`)
+  assert((await evaluate(`document.querySelector('#nota-actions a[href^="/admin/emitir?de="]')?.getAttribute('href')`)) === '/admin/emitir?de=dup-can', 'the canceled nota lacks its Duplicar link')
+
+  await gotoRewritten(`${duplicating.origin}/admin/emitir?de=nao-existe`)
+  await waitFor(`document.getElementById('emitir-state').textContent === 'Nota não encontrada.' && !document.getElementById('emitir-submit').disabled`)
+  const unknown = await fieldValues()
+  for (const [key, value] of Object.entries(unknown)) {
+    if (key === 'field-id' || key === 'field-competence') continue
+    assert(value === '', `${key} is "${value}" for an unknown source`)
+  }
+  assert(unknown['field-id'] !== '' && unknown['field-competence'] === todayBrasilia(), 'the unknown source form lost its id or competence')
+})
+
+await check('duplicate-reload', async () => {
+  await gotoRewritten(`${duplicating.origin}/admin/emitir?de=dup-src`)
+  await waitFor(`/^\\?de=dup-src&id=painel-/.test(location.search) && !document.getElementById('emitir-submit').disabled && document.getElementById('field-name').value !== ''`)
+  const id = await evaluate(`new URLSearchParams(location.search).get('id')`)
+  await reload()
+  await waitFor(`!document.getElementById('emitir-submit').disabled && document.getElementById('field-name').value !== ''`)
+  assert((await evaluate('location.search')) === `?de=dup-src&id=${id}`, `the address after the reload is ${await evaluate('location.search')}`)
+  assert((await evaluate(`document.getElementById('field-id').value`)) === id, 'the reload changed the id field')
+  const values = await fieldValues()
+  assert(values['field-name'] === 'Acme Ltda' && values['field-value'] === '1.234,56' && values['field-description'] === 'Aula de violão', `the reload did not refill the form: ${JSON.stringify(values)}`)
+})
+
+await check('row-actions-narrow', async () => {
+  await viewport(1280, false)
+  await goto(`${duplicating.origin}/admin`)
+  await waitFor(`document.querySelectorAll('#notas-body tr').length >= 10`)
+  const links = `[...${rowOf('dup-src')}.querySelector('td[data-label="Ações"]').querySelectorAll('a')]`
+  const wide = await evaluate(`(() => { const a = ${links}; return { texts: a.map((el) => el.textContent), tops: a.map((el) => Math.round(el.getBoundingClientRect().top)), scroll: document.documentElement.scrollWidth, inner: window.innerWidth } })()`)
+  assert(wide.texts.join() === 'PDF,Cancelar,Duplicar', `the actions read ${wide.texts.join()}`)
+  assert(new Set(wide.tops).size === 1, `the actions are not on one line at 1280 px: tops ${wide.tops.join()}`)
+  assert(wide.scroll <= wide.inner, `the page scrolls sideways at 1280 px: ${wide.scroll} > ${wide.inner}`)
+  await shot('actions-wide.png')
+  await viewport(375, true)
+  const narrow = await evaluate(`(() => { const a = ${links}; const td = ${rowOf('dup-src')}.querySelector('td[data-label="Ações"]'); return { scroll: document.documentElement.scrollWidth, label: getComputedStyle(td, '::before').content, widths: a.map((el) => Math.round(el.getBoundingClientRect().width)) } })()`)
+  assert(narrow.scroll <= 375, `the page scrolls sideways at 375 px: scrollWidth ${narrow.scroll}`)
+  assert(narrow.label === '"Ações"', `the Ações card label is ${narrow.label}`)
+  assert(narrow.widths.length === 3 && narrow.widths.every((width) => width > 0), `the card actions have widths ${narrow.widths.join()}`)
+  await shot('actions-narrow.png')
+  await viewport(1280, false)
+})
+
 await check('console-clean', async () => {
   assert(everyConsoleError.length === 0, `console errors during the run: ${everyConsoleError.join(' | ')}`)
 })

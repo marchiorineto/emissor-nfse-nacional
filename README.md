@@ -258,6 +258,26 @@ partir do login, sem renovação. O botão "Sair" apaga a sessão deste navegado
 Uma senha errada mostra "Senha incorreta.", e as tentativas erradas seguidas do mesmo endereço esperam cada vez mais,
 de 1 até 30 segundos.
 
+### Emitir, cancelar e duplicar
+
+"Emitir nota" abre um formulário cujo identificador da venda já está no endereço da página (`?id=`). Recarregar a página
+ou enviar de novo nunca faz uma segunda nota: o servidor devolve a nota que esse identificador já tem. Se o
+identificador já foi usado, o painel abre essa nota e avisa "Esta nota já foi emitida com este id.". O painel lembra no
+navegador o código do serviço, o NBS e a descrição, nunca o cliente. O formulário emite só para tomador no Brasil;
+para tomador no exterior ou exportação de serviço, use a API.
+
+"Cancelar" existe só para notas Emitidas, na lista e nos detalhes. Ele pede o motivo e uma confirmação, e nada é enviado
+ao governo antes de você clicar em "Confirmar cancelamento".
+
+"Duplicar" aparece em toda nota, qualquer que seja a situação. Ele abre o formulário já preenchido com o cliente
+(CPF/CNPJ, nome, e-mail e telefone), o serviço e o valor da nota, com um identificador novo e a competência de hoje. A
+nota original não muda e nunca é substituída. Se ela tinha tomador no exterior ou dados de exportação, o formulário diz
+que isso não foi copiado. Recarregar o formulário mantém o mesmo identificador e preenche tudo de novo.
+
+"Tentar de novo" aparece nos detalhes de uma nota Pendente ou Sem resposta, quando o governo não respondeu. Ele reenvia
+a nota com o mesmo identificador e os mesmos dados, então o servidor confere a DPS no governo antes de enviar e nunca
+emite duas vezes. A janela e a linha da lista mostram o que o governo respondeu desta vez.
+
 ### Atrás de um proxy
 
 Com HTTPS (`PUBLIC_URL` em `https://` ou o cabeçalho `X-Forwarded-Proto`), o cookie sai com `Secure`.

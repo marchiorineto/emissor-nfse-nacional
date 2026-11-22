@@ -262,7 +262,10 @@ export const errorBoxes = (nota) =>
     { heading: 'Erros no cancelamento', errors: nota.cancelErrors },
   ].filter((box) => Array.isArray(box.errors) && box.errors.length > 0)
 
-/** The text-only notice of a status: no answer from the government, or a document that is no longer valid. Never an action. */
+/**
+ * The notice of a status, shown as plain text next to the dialog's actions: no answer from the government (the dialog offers
+ * Tentar de novo beside it), or a document that is no longer valid. The notice itself carries no link or button.
+ */
 export const statusNotice = (nota) => {
   if (nota.status === 'pending' || nota.status === 'unknown') return 'O governo não respondeu. A nota será verificada quando o sistema de origem reenviar este id.'
   if (nota.status === 'canceled') return 'Este documento não é mais válido: a nota foi cancelada.'
