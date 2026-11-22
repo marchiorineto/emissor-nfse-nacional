@@ -150,6 +150,52 @@ const detailFixtures = () => {
 }
 
 /**
+ * Fixtures of Duplicar and Tentar de novo: an issued nota that replaced another (dup-src, its replaces must never be copied), a
+ * taker abroad with export data, a hostile name, a canceled nota, and the unanswered notas the retry checks resend (ret-pend
+ * carries a replaces with both id and the stored accessKey, which the retry must reduce to the id).
+ */
+const duplicateFixtures = () => {
+  const base = (id, index, status, extra = {}) => ({
+    id,
+    status,
+    request: {
+      id,
+      serviceCode: '080201',
+      nbsCode: '123012100',
+      description: 'Aula de violão',
+      valueCents: 123456,
+      competence: '2026-10-15',
+      taker: { taxId: '11222333000181', name: 'Acme Ltda', email: 'contato@acme.test', phone: '11999990000' },
+      ...extra.request,
+    },
+    dpsNumber: 500 + index,
+    dpsId: `DPS${500 + index}`,
+    createdAt: `2026-11-20T0${index}:00:00.000Z`,
+    updatedAt: `2026-11-20T0${index}:00:00.000Z`,
+    ...(['issued', 'canceled', 'replaced'].includes(status) ? { accessKey: '4'.repeat(50), nfseNumber: String(500 + index), issuedAt: '2026-11-20T15:30:00Z' } : {}),
+    ...Object.fromEntries(Object.entries(extra).filter(([key]) => key !== 'request')),
+  })
+  return [
+    base('dup-old', 1, 'replaced', { accessKey: '5'.repeat(50), replacedBy: 'dup-src' }),
+    base('dup-src', 2, 'issued', { accessKey: '6'.repeat(50), nfseNumber: '501', request: { replaces: { id: 'dup-old', reasonCode: '01', accessKey: '5'.repeat(50) } } }),
+    base('dup-abroad', 3, 'issued', {
+      request: {
+        nbsCode: '115022000',
+        taker: { name: 'Acme Inc', abroad: { nif: 'US-1', address: { country: 'US', postalCode: '10001', city: 'New York', region: 'NY', street: '5th Ave', number: '1' } } },
+        export: { resultCountry: 'US', currency: '220', foreignValueCents: 25000 },
+      },
+    }),
+    base('dup-hostile', 4, 'rejected', { request: { taker: { taxId: '12345678909', name: HOSTILE } } }),
+    base('dup-can', 5, 'canceled', { canceledAt: '2026-11-21T15:30:00Z' }),
+    base('ret-old', 6, 'issued', { accessKey: '7'.repeat(50) }),
+    base('ret-pend', 7, 'pending', { request: { replaces: { id: 'ret-old', reasonCode: '99', reason: 'Correção do valor cobrado do cliente', accessKey: '7'.repeat(50) } } }),
+    base('ret-pend2', 8, 'pending'),
+    base('ret-pend3', 9, 'pending'),
+    base('ret-unk', 0, 'unknown', { dpsId: 'DPS999' }),
+  ]
+}
+
+/**
  * A government stub that can actually answer, one scripted step at a time. `dps` and `events` are step queues the checks push
  * onto; an empty queue means the default ('issue' for a DPS, 'ok' for an event). A step is a name or { delayMs, then }, which
  * waits delayMs and then applies `then` (default the same default). `sent` and `eventsSent` hold every XML posted. The steps:
@@ -263,6 +309,9 @@ const issuing = await scenario({ gov: issuingGov.gov })
 // The cancel action: the list fixtures (every issued nota has an access key) and a government stub whose events the checks script.
 const cancelingGov = scriptedGov()
 const canceling = await scenario({ notas: fixtures(), gov: cancelingGov.gov })
+// Duplicar and Tentar de novo: their own fixtures and a government stub that issues and can be scripted to stay silent or reject.
+const duplicatingGov = scriptedGov()
+const duplicating = await scenario({ notas: duplicateFixtures(), gov: duplicatingGov.gov })
 
 // (c) The real login: the cookie Chrome gets is the one the server issued.
 const loginRes = await fetch(`${main.origin}/login`, {
@@ -293,9 +342,14 @@ const wsUrl = await new Promise((resolve) => {
   chrome.stderr.on('data', (chunk) => {
     seen += chunk
     const match = /DevTools listening on (ws:\/\/\S+)/.exec(seen)
-    if (match) resolve(match[1])
+    if (match) {
+      clearTimeout(startTimer)
+      resolve(match[1])
+    }
   })
-  setTimeout(fail, 20_000).unref()
+  // Only the start of Chrome is timed: the timer must not outlive it, or a long run is reported as "cannot start Chrome".
+  const startTimer = setTimeout(fail, 20_000)
+  startTimer.unref()
 })
 
 const socket = new WebSocket(wsUrl)
@@ -886,7 +940,8 @@ await check('dialog-pdf', async () => {
     assert(body.includes('O governo não respondeu. A nota será verificada quando o sistema de origem reenviar este id.'), `${id}: the D-16a notice is missing`)
     assert((await evaluate(`document.querySelectorAll('#nota-body a[download]').length`)) === 0, `${id}: a PDF link is shown`)
     const buttons = await evaluate(`[...document.querySelectorAll('#nota-dialog button')].map((b) => b.textContent)`)
-    assert(buttons.join(',') === 'Fechar', `${id}: buttons are ${buttons.join(',')}`)
+    assert(buttons.join(',') === 'Tentar de novo,Fechar', `${id}: buttons are ${buttons.join(',')}`)
+    assert((await evaluate(`document.querySelectorAll('#nota-actions a[href^="/admin/emitir?de="]').length`)) === 1, `${id}: the footer lacks the Duplicar link`)
     assert((await evaluate(`document.querySelectorAll('#nota-body a').length`)) === 0, `${id}: the dialog body offers links`)
   }
   assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
@@ -1249,7 +1304,7 @@ await check('cancel-row', async () => {
   // A nota that cannot be canceled shows no Cancelar in the footer.
   await evaluate(`location.hash = '#nota=n197'`)
   await waitFor(`document.getElementById('nota-status').textContent === 'Pendente'`)
-  assert((await evaluate(`document.getElementById('nota-actions').children.length`)) === 0, 'a pending nota has an action in the footer')
+  assert((await evaluate(`document.querySelectorAll('#nota-actions a[href$="&cancelar"]').length`)) === 0, 'a pending nota offers Cancelar in the footer')
   await evaluate(`location.hash = '#nota=n170&cancelar'`)
   await waitFor(`document.querySelector('#nota-dialog section#cancel-form')`)
   assert(cancelPosts(canceling).length === before.posts, 'a cancel was sent before the confirmation')
@@ -1289,7 +1344,7 @@ await check('cancel-nothing-sent', async () => {
   await evaluate(`document.querySelector('#nota-actions a').click()`)
   await waitFor(`document.querySelector('#nota-dialog section#cancel-form')`)
   assert((await dialogHash()).endsWith('&cancelar'), `the hash after the footer Cancelar is ${await dialogHash()}`)
-  assert((await evaluate(`document.querySelectorAll('#nota-actions a').length`)) === 0, 'the footer still offers Cancelar while the section shows')
+  assert((await evaluate(`document.querySelectorAll('#nota-actions a[href$="&cancelar"]').length`)) === 0, 'the footer still offers Cancelar while the section shows')
   await chooseCode('9')
   assert((await reasonValue()) === 'Cancelamento solicitado pelo emitente', `code 9 gives "${await reasonValue()}"`)
   await typeReason('Cliente desistiu da compra antes do curso')
@@ -1475,6 +1530,196 @@ await check('cancel-style', async () => {
   assert(narrow.page <= 375, `the page scrolls sideways: scrollWidth ${narrow.page} at 375 px`)
   assert(narrow.scroll <= narrow.client, `the dialog article overflows: scrollWidth ${narrow.scroll} > clientWidth ${narrow.client}`)
   await shot('cancel-narrow.png')
+  await viewport(1280, false)
+})
+
+/** The POSTs the server recorded for a scenario that went to /v1/notas (an issue or a retry). */
+const issuePosts = (served) => served.posts.filter((post) => post.method === 'POST' && post.path === '/v1/notas')
+
+await check('duplicate-row', async () => {
+  await viewport(1280, false)
+  await goto(`${duplicating.origin}/admin`)
+  await waitFor(`document.querySelectorAll('#notas-body tr').length === 10`)
+  const before = issuePosts(duplicating).length
+  await evaluate(`${rowOf('dup-src')}.querySelector('a[href^="/admin/emitir?de="]').click()`)
+  await waitFor(`location.pathname === '/admin/emitir' && /^\\?de=dup-src&id=painel-\\d{8}-[a-z0-9]{6}$/.test(location.search) && document.readyState === 'complete'`)
+  await waitFor(`!document.getElementById('emitir-submit').disabled`)
+  const today = todayBrasilia()
+  const values = await fieldValues()
+  const expected = {
+    'field-taxId': '11222333000181',
+    'field-name': 'Acme Ltda',
+    'field-email': 'contato@acme.test',
+    'field-phone': '11999990000',
+    'field-serviceCode': '080201',
+    'field-nbsCode': '123012100',
+    'field-description': 'Aula de violão',
+    'field-value': '1.234,56',
+    'field-competence': today,
+  }
+  for (const [key, value] of Object.entries(expected)) assert(values[key] === value, `${key} is "${values[key]}", expected "${value}"`)
+  const urlId = await evaluate(`new URLSearchParams(location.search).get('id')`)
+  assert(values['field-id'] === urlId, 'the id field differs from the URL id')
+  assert(urlId.slice(7, 15) === today.replaceAll('-', ''), `the new id "${urlId}" does not carry today's date`)
+  const gets = v1Requests.filter((r) => r.method === 'GET' && r.url.pathname === '/v1/notas/dup-src')
+  assert(gets.length === 1, `the page sent ${gets.length} GET /v1/notas/dup-src, expected 1`)
+  assert((await evaluate(`document.querySelectorAll('#emitir-form')[0].previousElementSibling.getAttribute('role')`)) !== 'note', 'a dropped-data note shows for a Brazil duplicate')
+
+  await evaluate(`document.getElementById('emitir-submit').click()`)
+  await waitFor(`location.pathname === '/admin' && location.hash === ${JSON.stringify(`#${new URLSearchParams({ nota: urlId })}`)}`)
+  await waitFor(`document.getElementById('nota-dialog').open && /^NFS-e \\d+$/.test(document.getElementById('nota-title').textContent)`)
+  assert((await evaluate(`document.getElementById('nota-status').textContent`)) === 'Emitida', 'the duplicate is not Emitida')
+  const sent = issuePosts(duplicating).slice(before)
+  assert(sent.length === 1, `expected 1 POST to /v1/notas, saw ${sent.length}`)
+  const body = JSON.parse(sent[0].body)
+  assert(body.id === urlId && body.competence === today, `the POST body is ${sent[0].body}`)
+  assert(!('replaces' in body) && !('export' in body), `the duplicate carries replaces or export: ${sent[0].body}`)
+  const source = await duplicating.repo.get('dup-src')
+  assert(source?.status === 'issued' && source.replacedBy === undefined, `the source nota changed: ${JSON.stringify(source)}`)
+  const old = await duplicating.repo.get('dup-old')
+  assert(old?.status === 'replaced' && old.replacedBy === 'dup-src', `dup-old changed: ${JSON.stringify(old)}`)
+  assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
+})
+
+/** Opens a nota of the duplicating scenario by deep link and waits until its dialog is filled and its list is loaded. */
+const openDuplicating = async (id) => {
+  await goto(`${duplicating.origin}/admin#nota=${encodeURIComponent(id)}`)
+  await waitFor(`document.getElementById('nota-dialog').open && !/^Carregando/.test(document.getElementById('nota-title').textContent)`)
+  await waitFor(`document.querySelectorAll('#notas-body tr').length > 0`)
+}
+const retryStatus = () => evaluate(`document.getElementById('nota-status').textContent`)
+const retryMessage = () => evaluate(`document.getElementById('nota-message')?.textContent ?? null`)
+const rowLabel = (id) => evaluate(`${rowOf(id)}?.children[4].textContent ?? null`)
+const NOT_ANSWERED = 'O governo não respondeu. A nota será verificada quando o sistema de origem reenviar este id.'
+
+await check('retry-pending-replaces', async () => {
+  await viewport(1280, false)
+  await openDuplicating('ret-pend')
+  assert((await retryStatus()) === 'Pendente', `the status is ${await retryStatus()}`)
+  assert((await evaluate(`document.getElementById('nota-body').textContent`)).includes(NOT_ANSWERED), 'the unanswered notice changed or is missing')
+  assert((await evaluate(`document.getElementById('nota-retry')?.textContent`)) === 'Tentar de novo', 'Tentar de novo is missing')
+  const before = issuePosts(duplicating).length
+  await evaluate(`document.getElementById('nota-retry').click()`)
+  await waitFor(`document.getElementById('nota-status').textContent === 'Emitida' && !document.getElementById('nota-retry')`)
+  assert((await rowLabel('ret-pend')) === 'Emitida', `the ret-pend row says ${await rowLabel('ret-pend')}`)
+  const sent = issuePosts(duplicating).slice(before)
+  assert(sent.length === 1, `expected 1 retry POST, saw ${sent.length}`)
+  const body = JSON.parse(sent[0].body)
+  assert(body.id === 'ret-pend', `the retry id is ${body.id}`)
+  assert(JSON.stringify(sortKeys(body.replaces)) === JSON.stringify(sortKeys({ id: 'ret-old', reasonCode: '99', reason: 'Correção do valor cobrado do cliente' })), `the retry replaces is ${JSON.stringify(body.replaces)}`)
+  assert((await retryMessage()) === null, `the dialog still says "${await retryMessage()}" after an issued answer`)
+  const old = await duplicating.repo.get('ret-old')
+  assert(old?.status === 'replaced' && old.replacedBy === 'ret-pend', `ret-old is ${JSON.stringify(old)}`)
+  assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
+})
+
+await check('retry-unanswered', async () => {
+  await openDuplicating('ret-pend2')
+  duplicatingGov.dps.push('unreached')
+  await evaluate(`document.getElementById('nota-retry').click()`)
+  await waitFor(`document.getElementById('nota-message')?.textContent === 'O governo ainda não respondeu. Tente de novo mais tarde.'`)
+  assert((await retryStatus()) === 'Sem resposta', `the status is ${await retryStatus()}`)
+  assert((await evaluate(`Boolean(document.getElementById('nota-retry')) && !document.getElementById('nota-retry').disabled`)) === true, 'Tentar de novo is not available again')
+  assert((await rowLabel('ret-pend2')) === 'Sem resposta', `the ret-pend2 row says ${await rowLabel('ret-pend2')}`)
+  duplicatingGov.dps.push('reject')
+  await evaluate(`document.getElementById('nota-retry').click()`)
+  await waitFor(`document.getElementById('nota-status').textContent === 'Rejeitada' && document.querySelector('#nota-body section[data-errors]')`)
+  assert((await evaluate(`document.querySelector('#nota-body section[data-errors] h3').textContent`)) === 'Erros na emissão', 'the rejection lacks the Erros na emissão box')
+  assert((await evaluate(`document.getElementById('nota-retry')`)) === null, 'a rejected nota still offers Tentar de novo')
+  assert((await rowLabel('ret-pend2')) === 'Rejeitada', `the ret-pend2 row says ${await rowLabel('ret-pend2')}`)
+  assert((await evaluate(`document.querySelectorAll('#nota-dialog img').length`)) === 0, 'an img element exists in the dialog')
+  assert((await evaluate('document.title')) === TITLE, 'document.title changed')
+})
+
+await check('retry-unknown', async () => {
+  await openDuplicating('ret-unk')
+  assert((await retryStatus()) === 'Sem resposta', `the status is ${await retryStatus()}`)
+  const before = issuePosts(duplicating).length
+  duplicatingGov.dps.push({ delayMs: 800 })
+  const disabled = await evaluate(`(() => { const button = document.getElementById('nota-retry'); button.click(); button.click(); return button.disabled })()`)
+  assert(disabled === true, 'Tentar de novo is not disabled while waiting')
+  await waitFor(`document.getElementById('nota-status').textContent === 'Emitida' && !document.getElementById('nota-retry')`)
+  const sent = issuePosts(duplicating).slice(before)
+  assert(sent.length === 1 && JSON.parse(sent[0].body).id === 'ret-unk', `two clicks recorded ${sent.length} POST(s), expected 1`)
+  assert((await rowLabel('ret-unk')) === 'Emitida', `the ret-unk row says ${await rowLabel('ret-unk')}`)
+  assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
+})
+
+await check('retry-filtered', async () => {
+  await goto(`${duplicating.origin}/admin?status=pending`)
+  await waitFor(`document.querySelectorAll('#notas-body tr').length > 0`)
+  const before = await rowIds()
+  assert(before.includes('ret-pend3'), `the pending list is ${before.join()}`)
+  await evaluate(`${rowOf('ret-pend3')}.querySelector('a:not([href^="/admin/emitir"]):not([download])').click()`)
+  await waitFor(`document.getElementById('nota-dialog').open && document.getElementById('nota-retry')`)
+  await evaluate(`document.getElementById('nota-retry').click()`)
+  await waitFor(`document.getElementById('nota-status').textContent === 'Emitida'`)
+  const after = await rowIds()
+  assert(after.length === before.length - 1 && !after.includes('ret-pend3'), `the filtered list is ${after.join()} after the retry (before ${before.join()})`)
+  assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
+})
+
+await check('duplicate-edges', async () => {
+  await viewport(1280, false)
+  const abroadNotice = 'O tomador no exterior e os dados de exportação não foram copiados: este formulário emite só para tomador no Brasil.'
+  await gotoRewritten(`${duplicating.origin}/admin/emitir?de=dup-abroad`)
+  await waitFor(`!document.getElementById('emitir-submit').disabled && document.getElementById('field-serviceCode').value !== ''`)
+  const title = await evaluate('document.title')
+  const shown = await evaluate(`(() => { const el = document.getElementById('emitir-form').previousElementSibling; return el && el.getAttribute('role') === 'note' ? el.textContent : null })()`)
+  assert(shown === abroadNotice, `the note before the form is ${JSON.stringify(shown)}`)
+  const abroad = await fieldValues()
+  for (const key of ['taxId', 'name', 'email', 'phone']) assert(abroad[`field-${key}`] === '', `field-${key} is "${abroad[`field-${key}`]}" for a taker abroad`)
+  const wanted = { 'field-nbsCode': '115022000', 'field-serviceCode': '080201', 'field-description': 'Aula de violão', 'field-value': '1.234,56' }
+  for (const [key, value] of Object.entries(wanted)) assert(abroad[key] === value, `${key} is "${abroad[key]}", expected "${value}"`)
+
+  await gotoRewritten(`${duplicating.origin}/admin/emitir?de=dup-hostile`)
+  await waitFor(`document.getElementById('field-name').value !== ''`)
+  assert((await evaluate(`document.getElementById('field-name').value`)) === HOSTILE, 'the hostile name is not in the field verbatim')
+  assert((await evaluate(`document.querySelectorAll('img').length`)) === 0, 'an img element exists in the page')
+  assert((await evaluate('document.title')) === title, `document.title changed to "${await evaluate('document.title')}"`)
+
+  await goto(`${duplicating.origin}/admin#nota=dup-can`)
+  await waitFor(`document.getElementById('nota-dialog').open && !/^Carregando/.test(document.getElementById('nota-title').textContent)`)
+  assert((await evaluate(`document.querySelector('#nota-actions a[href^="/admin/emitir?de="]')?.getAttribute('href')`)) === '/admin/emitir?de=dup-can', 'the canceled nota lacks its Duplicar link')
+
+  await gotoRewritten(`${duplicating.origin}/admin/emitir?de=nao-existe`)
+  await waitFor(`document.getElementById('emitir-state').textContent === 'Nota não encontrada.' && !document.getElementById('emitir-submit').disabled`)
+  const unknown = await fieldValues()
+  for (const [key, value] of Object.entries(unknown)) {
+    if (key === 'field-id' || key === 'field-competence') continue
+    assert(value === '', `${key} is "${value}" for an unknown source`)
+  }
+  assert(unknown['field-id'] !== '' && unknown['field-competence'] === todayBrasilia(), 'the unknown source form lost its id or competence')
+})
+
+await check('duplicate-reload', async () => {
+  await gotoRewritten(`${duplicating.origin}/admin/emitir?de=dup-src`)
+  await waitFor(`/^\\?de=dup-src&id=painel-/.test(location.search) && !document.getElementById('emitir-submit').disabled && document.getElementById('field-name').value !== ''`)
+  const id = await evaluate(`new URLSearchParams(location.search).get('id')`)
+  await reload()
+  await waitFor(`!document.getElementById('emitir-submit').disabled && document.getElementById('field-name').value !== ''`)
+  assert((await evaluate('location.search')) === `?de=dup-src&id=${id}`, `the address after the reload is ${await evaluate('location.search')}`)
+  assert((await evaluate(`document.getElementById('field-id').value`)) === id, 'the reload changed the id field')
+  const values = await fieldValues()
+  assert(values['field-name'] === 'Acme Ltda' && values['field-value'] === '1.234,56' && values['field-description'] === 'Aula de violão', `the reload did not refill the form: ${JSON.stringify(values)}`)
+})
+
+await check('row-actions-narrow', async () => {
+  await viewport(1280, false)
+  await goto(`${duplicating.origin}/admin`)
+  await waitFor(`document.querySelectorAll('#notas-body tr').length >= 10`)
+  const links = `[...${rowOf('dup-src')}.querySelector('td[data-label="Ações"]').querySelectorAll('a')]`
+  const wide = await evaluate(`(() => { const a = ${links}; return { texts: a.map((el) => el.textContent), tops: a.map((el) => Math.round(el.getBoundingClientRect().top)), scroll: document.documentElement.scrollWidth, inner: window.innerWidth } })()`)
+  assert(wide.texts.join() === 'PDF,Cancelar,Duplicar', `the actions read ${wide.texts.join()}`)
+  assert(new Set(wide.tops).size === 1, `the actions are not on one line at 1280 px: tops ${wide.tops.join()}`)
+  assert(wide.scroll <= wide.inner, `the page scrolls sideways at 1280 px: ${wide.scroll} > ${wide.inner}`)
+  await shot('actions-wide.png')
+  await viewport(375, true)
+  const narrow = await evaluate(`(() => { const a = ${links}; const td = ${rowOf('dup-src')}.querySelector('td[data-label="Ações"]'); return { scroll: document.documentElement.scrollWidth, label: getComputedStyle(td, '::before').content, widths: a.map((el) => Math.round(el.getBoundingClientRect().width)) } })()`)
+  assert(narrow.scroll <= 375, `the page scrolls sideways at 375 px: scrollWidth ${narrow.scroll}`)
+  assert(narrow.label === '"Ações"', `the Ações card label is ${narrow.label}`)
+  assert(narrow.widths.length === 3 && narrow.widths.every((width) => width > 0), `the card actions have widths ${narrow.widths.join()}`)
+  await shot('actions-narrow.png')
   await viewport(1280, false)
 })
 

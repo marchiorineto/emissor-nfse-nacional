@@ -1,5 +1,6 @@
 // Types of form.js, the issue form's pure helpers. The folder has no allowJs, so tsc needs this file to accept typed imports.
 // The storage types are structural because tsconfig has no DOM lib.
+import type { IssueRequest } from '../notas.ts'
 import type { NotaView } from './format.d.ts'
 
 /** The ten fields of the form, as typed (strings, nothing parsed yet). */
@@ -52,3 +53,15 @@ export const SERVICE_DEFAULTS_KEY: string
 export function loadServiceDefaults(storage?: { getItem(key: string): string | null }): Partial<Pick<IssueFields, 'serviceCode' | 'nbsCode' | 'description'>>
 /** Remembers serviceCode, nbsCode and description only; never throws. */
 export function saveServiceDefaults(storage: { setItem(key: string, value: string): void } | undefined, fields: IssueFields): void
+/** Integer cents as the pt-BR number the value field takes (1.234,56): two decimals, dot grouping, no currency symbol. */
+export function formatBrlInput(cents: number): string
+/** The note shown above a duplicate form when the source had a taker abroad or export data. */
+export const DROPPED_ABROAD_NOTICE: string
+/** The fields a duplicate form starts with, read from a nota (never the id, competence or replaces), and whether abroad or export data was left out. */
+export function prefillFromNota(nota: Pick<NotaView, 'request'>): { fields: Partial<IssueFields>; dropped: boolean }
+/** The address of the issue form filled from a nota: /admin/emitir?de=<id>. */
+export function duplicateHref(id: string): string
+/** The request Tentar de novo resends: a copy of the nota's stored request, without the accessKey of a replaces that also names the nota by id. */
+export function retryBody(nota: Pick<NotaView, 'request'>): IssueRequest
+/** Whether Tentar de novo is offered: the nota is pending or unknown (the government never answered). */
+export function canRetry(nota: Pick<NotaView, 'status'>): boolean

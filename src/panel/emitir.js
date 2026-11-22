@@ -8,10 +8,12 @@ import { errorSection, note } from './dom.js'
 import {
   brasiliaToday,
   buildIssueBody,
+  DROPPED_ABROAD_NOTICE,
   isAlreadyIssued,
   issueHints,
   issueProblem,
   loadServiceDefaults,
+  prefillFromNota,
   saveServiceDefaults,
   suggestId,
   validateForm,
@@ -68,6 +70,33 @@ if (!new URLSearchParams(location.search).has('de')) {
 }
 say('')
 errors.tabIndex = -1
+
+/**
+ * ?de=<id> (D-17): fills the form from the nota with that id. The new id is already in the URL, so a reload during the fetch keeps it
+ * and refills the form; the id is only ever placed inside an encoded same-origin path. The submit button stays off while the source
+ * loads. Every value goes in through the control's value property, never as markup.
+ */
+const loadSource = async (de) => {
+  submit.disabled = true
+  form.setAttribute('aria-busy', 'true')
+  say('Carregando a nota de origem…')
+  try {
+    const source = await api.get(`/v1/notas/${encodeURIComponent(de)}`)
+    const { fields, dropped } = prefillFromNota(source)
+    for (const [key, value] of Object.entries(fields)) field[key].value = value
+    if (dropped) form.before(note(DROPPED_ABROAD_NOTICE))
+    say('')
+  } catch (error) {
+    // A 401 already sent the browser to /login.
+    if (error instanceof Error && error.message === 'unauthorized') return
+    say(error instanceof Error && error.message === 'HTTP 404' ? 'Nota não encontrada.' : 'Não foi possível carregar a nota de origem. Recarregue a página.')
+  } finally {
+    if (!sending) {
+      submit.disabled = false
+      form.removeAttribute('aria-busy')
+    }
+  }
+}
 
 /** Removes the error shown next to a field. */
 const clearFieldError = (key) => {
@@ -187,3 +216,6 @@ form.addEventListener('submit', async (event) => {
     }
   }
 })
+
+const source = new URLSearchParams(location.search).get('de')
+if (source !== null && source.trim() !== '') loadSource(source.trim())

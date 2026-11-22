@@ -28,7 +28,7 @@ import {
 } from './format.js'
 import { pageApi } from './api.js'
 import { errorSection, note, text } from './dom.js'
-import { issueHints } from './form.js'
+import { canRetry, duplicateHref, issueHints, issueProblem, retryBody } from './form.js'
 
 const body = document.getElementById('notas-body')
 const state = document.getElementById('notas-state')
@@ -98,6 +98,10 @@ const renderRow = (nota) => {
     cancel.setAttribute('aria-label', `Cancelar a ${number.text}`)
     actions.append(cancel)
   }
+  const duplicate = text('a', 'Duplicar')
+  duplicate.href = duplicateHref(nota.id)
+  duplicate.setAttribute('aria-label', `Duplicar a ${number.text}`)
+  actions.append(duplicate)
   tr.append(actions)
   return tr
 }
@@ -129,9 +133,10 @@ const say = (message) => {
  * a nota the admin has already left. `jaEmitida` is the #...&ja-emitida flag of the open nota (the form was sent with an id that was
  * already issued) and `current` the nota last rendered, so a change of the flag re-renders without fetching again. `cancel` is the
  * #...&cancelar flag: the cancel section is showing; `cancelDraft` is what the admin chose and typed there ({ id, code, reason }),
- * kept while the section is drawn again for the same nota; `cancelling` holds the ids whose cancel request is in flight.
+ * kept while the section is drawn again for the same nota; `cancelling` holds the ids whose cancel request is in flight. `retrying` is
+ * true while a Tentar de novo request is in flight (one at a time).
  */
-const view = { status: null, last: null, generation: 0, nota: '', dialogGeneration: 0, jaEmitida: false, current: null, cancel: false, cancelDraft: null, cancelling: new Set() }
+const view = { status: null, last: null, generation: 0, nota: '', dialogGeneration: 0, jaEmitida: false, current: null, cancel: false, cancelDraft: null, cancelling: new Set(), retrying: false }
 
 /** Loads one page of the current filter: the newest one (replacing the rows) or, appending, the page after the last row shown. */
 const loadPage = async ({ append }) => {
@@ -294,6 +299,70 @@ const cancelSection = (nota) => {
   return section
 }
 
+/** Shows a status line first in the dialog body (p#nota-message), replacing the previous one; no text removes it. */
+const dialogMessage = (message) => {
+  document.getElementById('nota-message')?.remove()
+  if (message === '') return
+  const line = text('p', message)
+  line.id = 'nota-message'
+  line.setAttribute('role', 'status')
+  dialogBody.prepend(line)
+}
+
+/** The pt-BR line for a retry answer that is not a nota the dialog can show; status 0 means no answer arrived. */
+const retryProblem = (status, body) => {
+  const message = typeof body?.error === 'string' ? body.error : ''
+  if (status === 400 && message !== '') return `Não foi possível reenviar: ${issueProblem(message).message}`
+  if (status === 403) return 'A sessão mudou. Recarregue a página e tente de novo.'
+  if ((status === 404 || status === 409) && message !== '') return `Não foi possível reenviar: ${message}`
+  return 'Não foi possível confirmar o resultado. Tente de novo: o mesmo identificador não gera uma segunda nota.'
+}
+
+/** What the dialog says after a retry that came back as a nota: nothing for an issued one, the outcome for the others. */
+const RETRY_MESSAGES = { 202: 'O governo ainda não respondeu. Tente de novo mais tarde.', 422: 'O governo rejeitou a nota.' }
+
+/**
+ * Tentar de novo (D-10): posts the nota's stored request again under the same id, so the server asks the government before sending
+ * and can never issue twice. The row is patched from any answer that carries the nota (D-19 removal included), even when the admin
+ * left the dialog; the dialog is touched only while it still shows the same nota. One request at a time.
+ */
+const retryNota = async () => {
+  if (view.retrying || !view.current || !canRetry(view.current)) return
+  const nota = view.current
+  const generation = view.dialogGeneration
+  view.retrying = true
+  const button = document.getElementById('nota-retry')
+  if (button) {
+    button.disabled = true
+    button.setAttribute('aria-busy', 'true')
+  }
+  dialogMessage('Reenviando…')
+  try {
+    const answer = await api.request('POST', '/v1/notas', retryBody(nota))
+    const body = answer.body
+    const isNota = Boolean(body) && typeof body === 'object' && body.id === nota.id && typeof body.status === 'string'
+    if (isNota) patchRow(body)
+    if (generation !== view.dialogGeneration) return
+    if (isNota && [200, 202, 422].includes(answer.status)) {
+      view.current = body
+      renderNota(body)
+      dialogMessage(RETRY_MESSAGES[answer.status] ?? '')
+    } else {
+      dialogMessage(retryProblem(answer.status, body))
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message === 'unauthorized') return
+    if (generation === view.dialogGeneration) dialogMessage(retryProblem(0, null))
+  } finally {
+    view.retrying = false
+    const again = document.getElementById('nota-retry')
+    if (again && view.nota === nota.id) {
+      again.disabled = false
+      again.removeAttribute('aria-busy')
+    }
+  }
+}
+
 /** Renders what the dialog shows for a nota that was fetched. */
 const renderNota = (nota) => {
   const number = numberCell(nota)
@@ -320,12 +389,27 @@ const renderNota = (nota) => {
   }
   dialogBody.replaceChildren(...parts)
 
+  const actions = []
+  if (canRetry(nota)) {
+    const retry = text('button', 'Tentar de novo')
+    retry.type = 'button'
+    retry.id = 'nota-retry'
+    retry.disabled = view.retrying
+    retry.addEventListener('click', retryNota)
+    actions.push(retry)
+  }
   if (cancelable && !view.cancel) {
     const link = text('a', 'Cancelar')
     link.href = notaHash(nota.id, { cancelar: true, jaEmitida: view.jaEmitida })
     link.setAttribute('role', 'button')
-    dialogActions.replaceChildren(link)
-  } else dialogActions.replaceChildren()
+    actions.push(link)
+  }
+  // Duplicar is offered for every status (D-15): it opens a new form, so it never touches this nota.
+  const duplicate = text('a', 'Duplicar')
+  duplicate.href = duplicateHref(nota.id)
+  duplicate.setAttribute('role', 'button')
+  actions.push(duplicate)
+  dialogActions.replaceChildren(...actions)
 }
 
 /** The prefixes a link in the dialog may start with: a nota's hash, the same-origin PDF route, an https page. Anything else is shown as plain text. */

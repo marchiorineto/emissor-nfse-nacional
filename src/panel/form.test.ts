@@ -2,18 +2,26 @@ import { describe, expect, it } from 'vitest'
 import {
   brasiliaToday,
   buildIssueBody,
+  canRetry,
   digitsOnly,
+  DROPPED_ABROAD_NOTICE,
+  duplicateHref,
+  formatBrlInput,
   isAlreadyIssued,
   issueHints,
   issueProblem,
   loadServiceDefaults,
   parseBrl,
+  prefillFromNota,
+  retryBody,
   SERVICE_DEFAULTS_KEY,
   saveServiceDefaults,
   suggestId,
   validateForm,
 } from './form.js'
 import type { IssueFields } from './form.d.ts'
+import type { NotaView } from './format.d.ts'
+import { parseIssueRequest } from '../request.ts'
 
 const fields = (overrides: Partial<IssueFields> = {}): IssueFields => ({
   id: 'painel-20261121-abc123',
@@ -348,5 +356,139 @@ describe('remembered service fields', () => {
 
   it('uses the documented storage key', () => {
     expect(SERVICE_DEFAULTS_KEY).toBe('nfse-painel:servico')
+  })
+})
+
+const ACCESS_KEY = '7'.repeat(50)
+
+/** A nota as the panel reads it from GET /v1/notas/:id, with the request overridden. */
+const notaWith = (request: Partial<NotaView['request']> = {}, status: NotaView['status'] = 'issued'): NotaView => ({
+  id: 'src',
+  status,
+  request: {
+    id: 'src',
+    serviceCode: '080201',
+    description: 'Aula de violão',
+    valueCents: 123456,
+    competence: '2026-10-15',
+    ...request,
+  },
+  dpsNumber: 1,
+  dpsId: 'DPS1',
+  createdAt: '2026-11-20T01:00:00.000Z',
+  updatedAt: '2026-11-20T01:00:00.000Z',
+})
+
+describe('formatBrlInput', () => {
+  it('writes cents as pt-BR text with two decimals and dot grouping, without a currency symbol', () => {
+    expect(formatBrlInput(123456)).toBe('1.234,56')
+    expect(formatBrlInput(1)).toBe('0,01')
+    expect(formatBrlInput(100000000)).toBe('1.000.000,00')
+  })
+
+  it('is read back exactly by parseBrl', () => {
+    for (const cents of [1, 99, 123456, 100000000]) expect(parseBrl(formatBrlInput(cents))).toBe(cents)
+  })
+})
+
+describe('prefillFromNota', () => {
+  it('carries taker, service and value of a Brazil nota, never the id, the competence or anything of replaces', () => {
+    const { fields, dropped } = prefillFromNota(
+      notaWith({
+        nbsCode: '123012100',
+        taker: { taxId: '11222333000181', name: 'Acme Ltda', email: 'contato@acme.test', phone: '11999990000' },
+        replaces: { id: 'old', reasonCode: '01', accessKey: ACCESS_KEY },
+      }),
+    )
+    expect(fields).toEqual({
+      taxId: '11222333000181',
+      name: 'Acme Ltda',
+      email: 'contato@acme.test',
+      phone: '11999990000',
+      serviceCode: '080201',
+      nbsCode: '123012100',
+      description: 'Aula de violão',
+      value: '1.234,56',
+    })
+    expect(Object.keys(fields).join()).not.toMatch(/id$|competence|replaces/i)
+    expect(dropped).toBe(false)
+  })
+
+  it('leaves out the taker of a nota abroad and says so', () => {
+    const { fields, dropped } = prefillFromNota(
+      notaWith({ taker: { name: 'Acme Inc', abroad: { nif: 'US-1' } }, export: { resultCountry: 'US', currency: '220', foreignValueCents: 25000 } }),
+    )
+    for (const key of ['taxId', 'name', 'email', 'phone']) expect(fields).not.toHaveProperty(key)
+    expect(fields.serviceCode).toBe('080201')
+    expect(dropped).toBe(true)
+  })
+
+  it('keeps a Brazil taker of an export nota and says the export data was left out', () => {
+    const { fields, dropped } = prefillFromNota(
+      notaWith({ taker: { taxId: '11222333000181', name: 'Acme Ltda' }, export: { resultCountry: 'US', currency: '220', foreignValueCents: 25000 } }),
+    )
+    expect(fields.taxId).toBe('11222333000181')
+    expect(fields.name).toBe('Acme Ltda')
+    expect(dropped).toBe(true)
+  })
+
+  it('gives no taker keys for a nota without a taker', () => {
+    const { fields, dropped } = prefillFromNota(notaWith())
+    expect(Object.keys(fields).sort()).toEqual(['description', 'serviceCode', 'value'])
+    expect(dropped).toBe(false)
+  })
+
+  it('returns a markup name as the very same string', () => {
+    const hostile = '<img src=x onerror="document.title=\'pwned\'">'
+    expect(prefillFromNota(notaWith({ taker: { taxId: '12345678909', name: hostile } })).fields.name).toBe(hostile)
+  })
+
+  it('has a pt-BR notice for dropped data', () => {
+    expect(DROPPED_ABROAD_NOTICE).toBe('O tomador no exterior e os dados de exportação não foram copiados: este formulário emite só para tomador no Brasil.')
+  })
+})
+
+describe('duplicateHref', () => {
+  it('encodes the id as a query parameter', () => {
+    expect(duplicateHref('loja/1 #?')).toBe('/admin/emitir?de=loja%2F1+%23%3F')
+  })
+})
+
+describe('retryBody', () => {
+  const replacing = notaWith({ replaces: { id: 'old', reasonCode: '99', reason: 'Correção do valor cobrado do cliente', accessKey: ACCESS_KEY } }, 'pending')
+
+  it('drops the redundant accessKey when replaces names the nota by id', () => {
+    expect(retryBody(replacing).replaces).toEqual({ id: 'old', reasonCode: '99', reason: 'Correção do valor cobrado do cliente' })
+  })
+
+  it('keeps a replaces that has only an accessKey', () => {
+    const byKey = notaWith({ replaces: { accessKey: ACCESS_KEY, reasonCode: '01' } }, 'unknown')
+    expect(retryBody(byKey).replaces).toEqual({ accessKey: ACCESS_KEY, reasonCode: '01' })
+  })
+
+  it('gives a deep-equal copy of a request without replaces', () => {
+    const plain = notaWith({ taker: { taxId: '11222333000181', name: 'Acme Ltda' } }, 'pending')
+    const body = retryBody(plain)
+    expect(body).toEqual(plain.request)
+    expect(body).not.toBe(plain.request)
+    expect(body.taker).not.toBe(plain.request.taker)
+  })
+
+  it('never mutates the nota it reads', () => {
+    retryBody(replacing)
+    expect(replacing.request.replaces?.accessKey).toBe(ACCESS_KEY)
+  })
+
+  it('is accepted by the server parser for each kind of replaces', () => {
+    for (const nota of [replacing, notaWith({ replaces: { accessKey: ACCESS_KEY, reasonCode: '01' } }, 'unknown'), notaWith({}, 'pending')]) {
+      expect(typeof parseIssueRequest(retryBody(nota))).toBe('object')
+    }
+  })
+})
+
+describe('canRetry', () => {
+  it('is true only for a nota the government never answered', () => {
+    expect(['pending', 'unknown'].map((status) => canRetry({ status } as Pick<NotaView, 'status'>))).toEqual([true, true])
+    expect(['issued', 'rejected', 'canceled', 'replaced'].map((status) => canRetry({ status } as Pick<NotaView, 'status'>))).toEqual([false, false, false, false])
   })
 })
