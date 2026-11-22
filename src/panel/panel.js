@@ -4,6 +4,7 @@ import {
   ALREADY_ISSUED_NOTICE,
   CANCEL_REASONS,
   canCancel,
+  cancelProblem,
   cancelSuggestion,
   detailSections,
   errorBoxes,
@@ -19,6 +20,7 @@ import {
   parseStatus,
   pdfFilename,
   pdfHref,
+  reasonProblem,
   statusLabel,
   statusNotice,
   statusSearch,
@@ -118,9 +120,10 @@ const say = (message) => {
  * `nota` is the id the dialog shows ('' when closed), taken from the URL hash, and `dialogGeneration` retires the response of
  * a nota the admin has already left. `jaEmitida` is the #...&ja-emitida flag of the open nota (the form was sent with an id that was
  * already issued) and `current` the nota last rendered, so a change of the flag re-renders without fetching again. `cancel` is the
- * #...&cancelar flag: the cancel section is showing; `cancelling` holds the ids whose cancel request is in flight.
+ * #...&cancelar flag: the cancel section is showing; `cancelDraft` is what the admin chose and typed there ({ id, code, reason }),
+ * kept while the section is drawn again for the same nota; `cancelling` holds the ids whose cancel request is in flight.
  */
-const view = { status: null, last: null, generation: 0, nota: '', dialogGeneration: 0, jaEmitida: false, current: null, cancel: false, cancelling: new Set() }
+const view = { status: null, last: null, generation: 0, nota: '', dialogGeneration: 0, jaEmitida: false, current: null, cancel: false, cancelDraft: null, cancelling: new Set() }
 
 /** Loads one page of the current filter: the newest one (replacing the rows) or, appending, the page after the last row shown. */
 const loadPage = async ({ append }) => {
@@ -156,9 +159,10 @@ const loadPage = async ({ append }) => {
 /** The hash of the open nota without the cancel flag, keeping the ja-emitida one: what Voltar and a finished cancel go back to. */
 const plainHash = (id) => notaHash(id, { jaEmitida: view.jaEmitida })
 
-/** Voltar: closes the cancel section without sending anything and leaves #nota=<id>. */
+/** Voltar: closes the cancel section without sending anything, forgets the draft and leaves #nota=<id>. */
 const closeCancel = (id) => {
   view.cancel = false
+  view.cancelDraft = null
   history.replaceState(null, '', location.pathname + location.search + plainHash(id))
   if (view.current) renderNota(view.current)
 }
@@ -169,27 +173,41 @@ const closeCancel = (id) => {
  */
 const confirmCancel = async (id, { code, reason, state, confirm }) => {
   if (view.cancelling.has(id)) return
+  const problem = reasonProblem(reason.value)
+  if (problem) {
+    state.textContent = problem
+    reason.setAttribute('aria-invalid', 'true')
+    reason.setAttribute('aria-describedby', 'cancel-state')
+    return
+  }
   view.cancelling.add(id)
   const generation = view.dialogGeneration
+  state.textContent = ''
   confirm.disabled = true
   confirm.setAttribute('aria-busy', 'true')
   try {
     const answer = await api.request('POST', `/v1/notas/${encodeURIComponent(id)}/cancel`, { reasonCode: code.value, reason: reason.value.trim() })
     const nota = answer.body
-    if (nota && typeof nota === 'object' && nota.id === id && typeof nota.status === 'string') patchRow(nota)
+    const isNota = Boolean(nota) && typeof nota === 'object' && nota.id === id && typeof nota.status === 'string'
+    if (isNota) patchRow(nota)
     if (generation !== view.dialogGeneration) return
-    if (answer.status === 200 && nota?.status === 'canceled') {
+    if (answer.status === 200 && isNota && nota.status === 'canceled') {
       view.cancel = false
+      view.cancelDraft = null
       view.jaEmitida = false
       view.current = nota
       history.replaceState(null, '', location.pathname + location.search + notaHash(id))
       renderNota(nota)
+    } else if (answer.status === 422 && isNota) {
+      // The government refused: show its cancelErrors under the section, which stays open with the draft.
+      view.current = nota
+      renderNota(nota)
     } else {
-      state.textContent = 'Não foi possível cancelar agora. Tente de novo.'
+      state.textContent = cancelProblem(answer.status, nota)
     }
   } catch (error) {
     if (error instanceof Error && error.message === 'unauthorized') return
-    if (generation === view.dialogGeneration) state.textContent = 'Não foi possível cancelar agora. Tente de novo.'
+    if (generation === view.dialogGeneration) state.textContent = cancelProblem(0, null)
   } finally {
     view.cancelling.delete(id)
     const button = document.getElementById('cancel-confirm')
@@ -218,7 +236,8 @@ const cancelSection = (nota) => {
     option.value = reasonCode.code
     code.append(option)
   }
-  code.value = '2'
+  const draft = view.cancelDraft?.id === nota.id ? view.cancelDraft : null
+  code.value = draft?.code ?? '2'
 
   const reasonLabel = text('label', 'Descrição do motivo')
   reasonLabel.htmlFor = 'cancel-reason'
@@ -226,11 +245,29 @@ const cancelSection = (nota) => {
   reason.id = 'cancel-reason'
   reason.maxLength = 255
   reason.rows = 3
-  reason.value = cancelSuggestion(code.value)
+  reason.value = draft ? draft.reason : cancelSuggestion(code.value)
 
   const state = text('p', '')
   state.id = 'cancel-state'
   state.setAttribute('role', 'status')
+
+  const saveDraft = () => {
+    view.cancelDraft = { id: nota.id, code: code.value, reason: reason.value }
+  }
+  let previous = code.value
+  // A new code swaps the suggestion only while the text is still the previous suggestion (or empty): the admin's own words stay.
+  code.addEventListener('change', () => {
+    if (reason.value === '' || reason.value === cancelSuggestion(previous)) reason.value = cancelSuggestion(code.value)
+    previous = code.value
+    saveDraft()
+  })
+  reason.addEventListener('input', () => {
+    saveDraft()
+    if (reason.getAttribute('aria-invalid') === 'true') {
+      reason.removeAttribute('aria-invalid')
+      if (state.textContent === reasonProblem('')) state.textContent = ''
+    }
+  })
 
   const confirm = text('button', 'Confirmar cancelamento')
   confirm.type = 'button'
@@ -340,6 +377,7 @@ const sync = () => {
     view.nota = id
     view.jaEmitida = jaEmitida
     view.cancel = cancelar
+    view.cancelDraft = null
     if (id) openNota(id)
     else if (dialog.open) {
       view.dialogGeneration++
@@ -358,6 +396,7 @@ dialog.addEventListener('close', () => {
   view.nota = ''
   view.jaEmitida = false
   view.cancel = false
+  view.cancelDraft = null
   view.current = null
   view.dialogGeneration++
   if (parseNotaHash(location.hash) !== '') history.replaceState(null, '', location.pathname + location.search)

@@ -1268,6 +1268,134 @@ await check('cancel-row', async () => {
   assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
 })
 
+/** Opens a nota of the canceling scenario by deep link and waits until its dialog is filled. */
+const openCancelable = async (id, flags = '') => {
+  await goto(`${canceling.origin}/admin#nota=${encodeURIComponent(id)}${flags}`)
+  await waitFor(`document.getElementById('nota-dialog').open && !/^Carregando/.test(document.getElementById('nota-title').textContent)`)
+}
+
+/** Picks a reason code in the cancel section the way a user does (change event), and types a reason (input event). */
+const chooseCode = (code) => evaluate(`(() => { const el = document.getElementById('cancel-code'); el.value = ${JSON.stringify(code)}; el.dispatchEvent(new Event('change', { bubbles: true })) })()`)
+const typeReason = (value) => evaluate(`(() => { const el = document.getElementById('cancel-reason'); el.value = ${JSON.stringify(value)}; el.dispatchEvent(new Event('input', { bubbles: true })) })()`)
+const reasonValue = () => evaluate(`document.getElementById('cancel-reason').value`)
+const cancelState = () => evaluate(`document.getElementById('cancel-state')?.textContent ?? null`)
+const dialogHash = () => evaluate('location.hash')
+
+await check('cancel-nothing-sent', async () => {
+  await viewport(1280, false)
+  const before = { posts: canceling.posts.length, events: cancelingGov.eventsSent.length }
+  await openCancelable('n174')
+  assert((await evaluate(`document.querySelector('#cancel-form')`)) === null, 'the section shows without the flag')
+  await evaluate(`document.querySelector('#nota-actions a').click()`)
+  await waitFor(`document.querySelector('#nota-dialog section#cancel-form')`)
+  assert((await dialogHash()).endsWith('&cancelar'), `the hash after the footer Cancelar is ${await dialogHash()}`)
+  assert((await evaluate(`document.querySelectorAll('#nota-actions a').length`)) === 0, 'the footer still offers Cancelar while the section shows')
+  await chooseCode('9')
+  assert((await reasonValue()) === 'Cancelamento solicitado pelo emitente', `code 9 gives "${await reasonValue()}"`)
+  await typeReason('Cliente desistiu da compra antes do curso')
+  await chooseCode('1')
+  assert((await reasonValue()) === 'Cliente desistiu da compra antes do curso', 'changing the code replaced the typed reason')
+  await evaluate(`document.getElementById('cancel-back').click()`)
+  await waitFor(`!document.getElementById('cancel-form')`)
+  assert((await dialogHash()) === '#nota=n174', `Voltar left the hash ${await dialogHash()}`)
+  assert(await dialogOpen(), 'Voltar closed the dialog')
+
+  await evaluate(`document.querySelector('#nota-actions a').click()`)
+  await waitFor(`document.querySelector('#nota-dialog section#cancel-form')`)
+  assert((await reasonValue()) === 'Serviço não prestado; valor devolvido ao cliente', 'the section did not start fresh after Voltar')
+  await typeReason('curto')
+  await evaluate(`document.getElementById('cancel-confirm').click()`)
+  await waitFor(`document.getElementById('cancel-state').textContent === 'O motivo deve ter de 15 a 255 caracteres.'`)
+  assert((await evaluate(`document.getElementById('cancel-reason').getAttribute('aria-invalid')`)) === 'true', 'the reason is not marked invalid')
+  await evaluate(`document.getElementById('cancel-reason').focus()`)
+  await pressKey('Enter', 'Enter', 13)
+  await pressKey('Escape', 'Escape', 27)
+  await waitFor(`!document.getElementById('nota-dialog').open && location.hash === ''`)
+
+  await openCancelable('n188', '&cancelar')
+  assert((await evaluate(`Boolean(document.querySelector('#nota-dialog section#cancel-form'))`)) === true, 'the deep link with the flag does not show the section')
+  await evaluate(`document.querySelector('#nota-dialog footer form button').click()`)
+  await waitFor(`!document.getElementById('nota-dialog').open && location.hash === ''`)
+  await openCancelable('n197', '&cancelar')
+  assert((await evaluate(`document.querySelector('#nota-dialog section#cancel-form')`)) === null, 'a pending nota shows the cancel section')
+  await settle()
+  assert(canceling.posts.length === before.posts, `${canceling.posts.length - before.posts} request(s) were sent without a confirmation`)
+  assert(cancelingGov.eventsSent.length === before.events, 'the government received an event without a confirmation')
+  assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
+})
+
+await check('cancel-answers', async () => {
+  await viewport(1280, false)
+  const before = { posts: cancelPosts(canceling).length, events: cancelingGov.eventsSent.length }
+  const typed = 'Motivo escrito pelo administrador'
+  await openCancelable('n168', '&cancelar')
+  await waitFor(`document.getElementById('cancel-form')`)
+  const title = await evaluate('document.title')
+
+  await typeReason(typed)
+  cancelingGov.events.push('refuse')
+  await evaluate(`document.getElementById('cancel-confirm').click()`)
+  await waitFor(`document.querySelector('#nota-body section[data-errors]')`)
+  assert((await evaluate(`document.querySelector('#nota-body section[data-errors] h3').textContent`)) === 'Erros no cancelamento', 'the errors box is not headed Erros no cancelamento')
+  const shown = await evaluate(`document.querySelector('#nota-body section[data-errors]').textContent`)
+  for (const part of ['E1235', 'Cancelamento fora do prazo', HOSTILE]) assert(shown.includes(part), `the cancel errors box lacks "${part}"`)
+  assert((await evaluate(`document.querySelectorAll('#nota-dialog img').length`)) === 0, 'an img element exists in the dialog')
+  assert((await evaluate('document.title')) === title, `document.title changed to "${await evaluate('document.title')}"`)
+  assert((await evaluate(`document.getElementById('nota-status').textContent`)) === 'Emitida', 'the dialog does not stay Emitida after a refusal')
+  assert((await evaluate(`Boolean(document.getElementById('cancel-form'))`)) === true, 'the section closed after a refusal')
+  assert((await reasonValue()) === typed, 'the typed reason was lost after a refusal')
+  assert((await evaluate(`document.getElementById('cancel-confirm').disabled`)) === false, 'the confirm button stays disabled after a refusal')
+
+  cancelingGov.events.push('unreached')
+  await evaluate(`document.getElementById('cancel-confirm').click()`)
+  await waitFor(`document.getElementById('cancel-state').textContent === 'O governo não respondeu. Tente de novo em alguns instantes.'`)
+  assert((await evaluate(`Boolean(document.getElementById('cancel-form'))`)) === true, 'the section closed after a 502')
+  assert((await reasonValue()) === typed, 'the typed reason was lost after a 502')
+
+  const stored = await canceling.repo.get('n168')
+  await canceling.repo.save({ ...stored, status: 'replaced' })
+  await evaluate(`document.getElementById('cancel-confirm').click()`)
+  await waitFor(`document.getElementById('cancel-state').textContent === 'Esta nota não pode ser cancelada: a situação dela é Substituída.'`)
+  assert((await evaluate(`document.getElementById('nota-status').textContent`)) === 'Emitida', 'the dialog changed after a 409')
+
+  await openCancelable('n166', '&cancelar')
+  await waitFor(`document.getElementById('cancel-form')`)
+  const respond = (status, body) => `window.fetch = () => Promise.resolve(new Response(${JSON.stringify(JSON.stringify(body))}, { status: ${status}, headers: { 'content-type': 'application/json' } }))`
+  try {
+    await evaluate(`window.__fetch = window.__fetch || window.fetch`)
+    await evaluate(respond(403, { error: 'invalid csrf token' }))
+    await evaluate(`document.getElementById('cancel-confirm').click()`)
+    await waitFor(`document.getElementById('cancel-state').textContent === 'A sessão mudou. Recarregue a página e tente de novo.'`)
+    await evaluate(`window.fetch = () => Promise.reject(new TypeError('Failed to fetch'))`)
+    await evaluate(`document.getElementById('cancel-confirm').click()`)
+    await waitFor(`document.getElementById('cancel-state').textContent === 'Não foi possível confirmar o resultado. Tente de novo: pedir o cancelamento outra vez não causa problema.'`)
+    assert((await evaluate(`document.getElementById('cancel-confirm').disabled`)) === false, 'the confirm button stays disabled after a lost answer')
+  } finally {
+    await evaluate(`window.fetch = window.__fetch`)
+  }
+  await evaluate(`document.getElementById('cancel-confirm').click()`)
+  await waitFor(`document.getElementById('nota-status').textContent === 'Cancelada' && !document.getElementById('cancel-form')`)
+
+  const sent = cancelPosts(canceling).slice(before.posts)
+  assert(sent.map((post) => post.path).join() === '/v1/notas/n168/cancel,/v1/notas/n168/cancel,/v1/notas/n168/cancel,/v1/notas/n166/cancel', `the cancel POSTs were ${sent.map((post) => post.path).join()}`)
+  assert(cancelingGov.eventsSent.length === before.events + 3, `the government received ${cancelingGov.eventsSent.length - before.events} event(s), expected 3`)
+  assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
+})
+
+await check('cancel-double-click', async () => {
+  const before = { posts: cancelPosts(canceling).length, events: cancelingGov.eventsSent.length }
+  await openCancelable('n164', '&cancelar')
+  await waitFor(`document.getElementById('cancel-form')`)
+  cancelingGov.events.push({ delayMs: 800 })
+  const disabled = await evaluate(`(() => { const button = document.getElementById('cancel-confirm'); button.click(); button.click(); return button.disabled })()`)
+  assert(disabled === true, 'the confirm button is not disabled while waiting')
+  await waitFor(`document.getElementById('nota-status').textContent === 'Cancelada' && !document.getElementById('cancel-form')`)
+  const sent = cancelPosts(canceling).slice(before.posts)
+  assert(sent.length === 1 && sent[0].path === '/v1/notas/n164/cancel', `two clicks recorded ${sent.length} POST(s), expected 1`)
+  assert(cancelingGov.eventsSent.length === before.events + 1, `two clicks sent ${cancelingGov.eventsSent.length - before.events} event(s), expected 1`)
+  assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
+})
+
 await check('console-clean', async () => {
   assert(everyConsoleError.length === 0, `console errors during the run: ${everyConsoleError.join(' | ')}`)
 })
