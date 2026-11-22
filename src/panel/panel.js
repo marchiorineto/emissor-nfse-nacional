@@ -19,6 +19,7 @@ import {
   statusSearch,
   takerCell,
 } from './format.js'
+import { errorSection, note, text } from './dom.js'
 
 const body = document.getElementById('notas-body')
 const state = document.getElementById('notas-state')
@@ -47,13 +48,6 @@ const cell = (label) => {
   td.setAttribute('role', 'cell')
   td.dataset.label = label
   return td
-}
-
-/** An element holding one piece of text. */
-const text = (tag, value) => {
-  const el = document.createElement(tag)
-  el.textContent = value
-  return el
 }
 
 /** One table row for a nota. */
@@ -154,25 +148,8 @@ const renderNota = (nota) => {
 
   const parts = []
   const notice = statusNotice(nota)
-  if (notice) {
-    const note = text('p', notice)
-    note.setAttribute('role', 'note')
-    parts.push(note)
-  }
-  for (const box of errorBoxes(nota)) {
-    const section = document.createElement('section')
-    section.dataset.errors = ''
-    section.append(text('h3', box.heading))
-    const list = document.createElement('ul')
-    for (const error of box.errors) {
-      const item = document.createElement('li')
-      item.append(text('strong', error.code), ' ', error.message)
-      if (error.detail) item.append(' ', text('small', error.detail))
-      list.append(item)
-    }
-    section.append(list)
-    parts.push(section)
-  }
+  if (notice) parts.push(note(notice))
+  for (const box of errorBoxes(nota)) parts.push(errorSection(box))
   for (const { title, rows } of detailSections(nota)) {
     const section = document.createElement('section')
     section.append(text('h3', title))

@@ -195,7 +195,7 @@ export const PAGE_CSP =
  * not a request) and served from /admin/ behind the session guard. Only these names are served; nothing else under src/ is.
  */
 export const PANEL_SCRIPTS: ReadonlyMap<string, string> = new Map(
-  ['panel.js', 'format.js', 'api.js', 'form.js', 'emitir.js'].map((name) => [name, readFileSync(new URL(`./panel/${name}`, import.meta.url), 'utf8')]),
+  ['panel.js', 'format.js', 'dom.js', 'api.js', 'form.js', 'emitir.js'].map((name) => [name, readFileSync(new URL(`./panel/${name}`, import.meta.url), 'utf8')]),
 )
 
 export interface AdminDeps {

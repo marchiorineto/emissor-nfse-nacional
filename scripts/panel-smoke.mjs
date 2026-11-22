@@ -957,6 +957,42 @@ await check('emitir-issue', async () => {
   assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
 })
 
+/** The value of every form control (#field-<key>) as an object keyed by id. */
+const fieldValues = () =>
+  evaluate(`Object.fromEntries([...document.querySelectorAll('[id^="field-"]')].filter((el) => /^field-[A-Za-z]+$/.test(el.id)).map((el) => [el.id, el.value]))`)
+
+await check('emitir-rejected', async () => {
+  await viewport(1280, false)
+  const id = 'painel-20261121-rej001'
+  const values = { taxId: '11222333000181', name: 'Acme Ltda', serviceCode: '080201', description: 'Aula de violão', value: '1.234,56' }
+  issuingGov.dps.push('reject')
+  await gotoRewritten(`${issuing.origin}/admin/emitir?id=${id}`)
+  const title = await evaluate('document.title')
+  await fill(values)
+  const typed = await fieldValues()
+  await evaluate(`document.getElementById('emitir-submit').click()`)
+  await waitFor(`document.querySelector('#emitir-errors section[data-errors]')`)
+  assert((await evaluate(`document.querySelector('#emitir-errors section[data-errors] h3').textContent`)) === 'Erros na emissão', 'the errors box is not headed Erros na emissão')
+  const shown = await evaluate(`document.getElementById('emitir-errors').textContent`)
+  for (const part of ['E0310', 'Código de tributação nacional inexistente', HOSTILE]) assert(shown.includes(part), `the errors box lacks "${part}"`)
+  assert((await evaluate(`document.querySelectorAll('main img').length`)) === 0, 'an img element exists under main')
+  assert((await evaluate('document.title')) === title, `document.title changed to "${await evaluate('document.title')}"`)
+  const after = await fieldValues()
+  assert(JSON.stringify(after) === JSON.stringify(typed), `the fields changed after the rejection: ${JSON.stringify(after)}`)
+  assert((await evaluate('location.search')) === `?id=${id}`, `the URL is now ${await evaluate('location.search')}`)
+  assert((await evaluate(`document.getElementById('emitir-submit').disabled`)) === false, 'the submit button stays disabled after the rejection')
+
+  await fill({ description: 'Aula de violão (corrigida)' })
+  await evaluate(`document.getElementById('emitir-submit').click()`)
+  await waitFor(`location.pathname === '/admin' && location.hash === ${JSON.stringify(`#${new URLSearchParams({ nota: id })}`)}`)
+  await waitFor(`document.getElementById('nota-dialog').open && /^NFS-e \\d+$/.test(document.getElementById('nota-title').textContent)`)
+  assert((await evaluate(`document.getElementById('nota-status').textContent`)) === 'Emitida', 'the resent nota is not Emitida')
+  const numbers = issuingGov.sent.slice(-2).map((xml) => /<nDPS>(\d+)<\/nDPS>/.exec(xml)?.[1])
+  assert(numbers.length === 2 && numbers[0] !== undefined && numbers[0] === numbers[1], `the two DPS carry nDPS ${numbers.join(' and ')}`)
+  assert(JSON.parse(issuing.posts[issuing.posts.length - 1].body).description === 'Aula de violão (corrigida)', 'the resent POST lacks the corrected description')
+  assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(' | ')}`)
+})
+
 await check('console-clean', async () => {
   assert(everyConsoleError.length === 0, `console errors during the run: ${everyConsoleError.join(' | ')}`)
 })
