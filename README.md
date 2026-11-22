@@ -159,6 +159,10 @@ docker run -d --name emissor-nfse --restart unless-stopped --env-file .env -p 80
 No Docker, o banco fica no volume `emissor-nfse-data`. Para ter HTTPS, coloque um proxy na frente (Caddy, nginx ou o
 da sua hospedagem) e preencha `PUBLIC_URL`.
 
+**Rode um único processo do servidor sobre o arquivo do banco.** A trava que impede duas requisições com o mesmo `id` de
+emitir duas notas funciona dentro do processo; dois processos ou containers sobre o mesmo arquivo SQLite não são
+suportados.
+
 **Faça backup do arquivo do banco.** É nele que ficam as notas e o contador das DPS. O governo guarda as notas
 emitidas, mas sem o banco o emissor perde a numeração e o vínculo entre o `id` de cada venda e a sua nota. Copie com o
 próprio SQLite, que funciona com o servidor ligado (copiar só o arquivo `.db` pode perder as últimas gravações):

@@ -261,28 +261,29 @@ export const createNotas = ({ repo, gov, config, now = () => new Date() }: { rep
       return markReplaced(await send(nota))
     })
 
-  const cancel: Notas['cancel'] = async (id, reason) => {
-    const nota = await repo.get(id)
-    if (!nota) throw notaError(404, 'nota not found')
-    if (nota.status === 'canceled') return nota
-    if (nota.status !== 'issued' || !nota.accessKey) throw notaError(409, `nota is ${nota.status}, not issued`)
-    const xml = buildCancellation({
-      environment: config.environment,
-      issuer: config.issuer,
-      accessKey: nota.accessKey,
-      at: new Date(now().getTime() - CLOCK_SKEW_MS),
-      reasonCode: reason.code ?? '2',
-      reason: reason.text ?? 'Venda cancelada e valor devolvido ao cliente',
+  const cancel: Notas['cancel'] = (id, reason) =>
+    serialized(repo, id, async () => {
+      const nota = await repo.get(id)
+      if (!nota) throw notaError(404, 'nota not found')
+      if (nota.status === 'canceled') return nota
+      if (nota.status !== 'issued' || !nota.accessKey) throw notaError(409, `nota is ${nota.status}, not issued`)
+      const xml = buildCancellation({
+        environment: config.environment,
+        issuer: config.issuer,
+        accessKey: nota.accessKey,
+        at: new Date(now().getTime() - CLOCK_SKEW_MS),
+        reasonCode: reason.code ?? '2',
+        reason: reason.text ?? 'Venda cancelada e valor devolvido ao cliente',
+      })
+      const result = await gov.sendEvent(sefin, nota.accessKey, xml)
+      if (!result.reached || result.status >= 500) throw notaError(502, 'government did not answer; try again')
+      if (result.status < 300) return save(nota, { status: 'canceled', canceledAt: now().toISOString(), cancelErrors: undefined })
+      const errors = govErrors(result.status, result.json)
+      if (errors.some((error) => ALREADY_CANCELED.test(`${error.message} ${error.detail ?? ''}`))) {
+        return save(nota, { status: 'canceled', canceledAt: now().toISOString(), cancelErrors: undefined })
+      }
+      return save(nota, { cancelErrors: errors })
     })
-    const result = await gov.sendEvent(sefin, nota.accessKey, xml)
-    if (!result.reached || result.status >= 500) throw notaError(502, 'government did not answer; try again')
-    if (result.status < 300) return save(nota, { status: 'canceled', canceledAt: now().toISOString(), cancelErrors: undefined })
-    const errors = govErrors(result.status, result.json)
-    if (errors.some((error) => ALREADY_CANCELED.test(`${error.message} ${error.detail ?? ''}`))) {
-      return save(nota, { status: 'canceled', canceledAt: now().toISOString(), cancelErrors: undefined })
-    }
-    return save(nota, { cancelErrors: errors })
-  }
 
   /** The government's DANFSe when its service answers; otherwise our rendering of the authorized XML. */
   const pdf: Notas['pdf'] = async (id) => {
