@@ -43,8 +43,12 @@ export function pdfHref(nota: Pick<NotaView, 'id' | 'accessKey'>): string | unde
 export function pdfFilename(nota: Pick<NotaView, 'nfseNumber' | 'dpsNumber'>): string
 /** The id a URL hash (#nota=<id>) names, or '' when there is none; never throws. */
 export function parseNotaHash(hash: string): string
-/** The URL hash that opens a nota: '#nota=<id>' with the id encoded. */
-export function notaHash(id: string): string
+/** The URL hash that opens a nota: '#nota=<id>' with the id encoded, then '&cancelar' and '&ja-emitida' for the flags that are true. */
+export function notaHash(id: string, flags?: { cancelar?: boolean; jaEmitida?: boolean }): string
+/** The flags a URL hash carries next to the nota id: '&cancelar' and '&ja-emitida'; never throws. */
+export function parseNotaFlags(hash: string): { cancelar: boolean; jaEmitida: boolean }
+/** The notice the dialog shows first when the form was sent with an id that already belongs to an issued nota. */
+export const ALREADY_ISSUED_NOTICE: string
 
 /** A value of a detail row: plain text, or a link (a #nota= hash, the same-origin PDF path or an https URL) with its text. */
 export type DetailValue = string | { text: string; href: string; download?: string; external?: boolean }
