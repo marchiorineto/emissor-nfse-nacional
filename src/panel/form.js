@@ -205,6 +205,21 @@ export const prefillFromNota = (nota) => {
 /** The address of the issue form filled from a nota: /admin/emitir?de=<id> (the form adds its own ?id=). */
 export const duplicateHref = (id) => '/admin/emitir?' + new URLSearchParams({ de: id })
 
+/**
+ * The request Tentar de novo resends (D-10): a copy of the nota's stored request, so the id and every field stay as they were. The one
+ * change is the accessKey of a replaces that also names the nota by id: the server stored both after resolving the id, and
+ * parseIssueRequest refuses a replaces with both (one of the two), so the redundant key goes and the server resolves the id again.
+ * The nota it reads is never changed.
+ */
+export const retryBody = (nota) => {
+  const request = structuredClone(nota.request)
+  if (request.replaces?.id !== undefined) delete request.replaces.accessKey
+  return request
+}
+
+/** Whether Tentar de novo is offered: the government never answered (pending or unknown). */
+export const canRetry = (nota) => nota.status === 'pending' || nota.status === 'unknown'
+
 /** The localStorage key of the remembered service fields. */
 export const SERVICE_DEFAULTS_KEY = 'nfse-painel:servico'
 
