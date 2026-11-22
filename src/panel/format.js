@@ -130,6 +130,27 @@ export const cancelSuggestion = (code) => CANCEL_REASONS.find((reason) => reason
 /** Whether the panel offers Cancelar for a nota: only an issued one that has an access key (D-11). */
 export const canCancel = (nota) => nota.status === 'issued' && Boolean(nota.accessKey)
 
+/** The problem with a cancel reason, '' when it is fine: after trimming it must have 15 to 255 characters, so the DPS builder never pads or cuts it (RESEARCH Pitfall 8). */
+export const reasonProblem = (value) => {
+  const length = value.trim().length
+  return length >= 15 && length <= 255 ? '' : 'O motivo deve ter de 15 a 255 caracteres.'
+}
+
+/** What the admin reads for a cancel answer that did not cancel and carries no government errors (a 422 is shown through the error box instead); status 0 is a request that got no answer. */
+export const cancelProblem = (status, body) => {
+  if (status === 0) return 'Não foi possível confirmar o resultado. Tente de novo: pedir o cancelamento outra vez não causa problema.'
+  if (status === 502) return 'O governo não respondeu. Tente de novo em alguns instantes.'
+  if (status === 404) return 'Nota não encontrada.'
+  if (status === 400) return 'O motivo foi recusado. Escolha um dos motivos da lista.'
+  if (status === 403) return 'A sessão mudou. Recarregue a página e tente de novo.'
+  if (status === 409) {
+    const error = body && typeof body === 'object' && typeof body.error === 'string' ? body.error : ''
+    const current = /nota is (\w+), not issued/.exec(error)?.[1]
+    return `Esta nota não pode ser cancelada: ${current ? `a situação dela é ${statusLabel(current)}` : 'ela não está emitida'}.`
+  }
+  return 'Não foi possível cancelar agora. Tente de novo.'
+}
+
 const dateTime = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', dateStyle: 'short', timeStyle: 'short' })
 
 /** An instant as DD/MM/YYYY, HH:MM in America/Sao_Paulo; text that is not a date (issuedAt can be the government's own date text) comes back as given. */
