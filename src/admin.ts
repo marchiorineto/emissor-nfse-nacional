@@ -5,7 +5,7 @@ import { deleteCookie, getCookie, setCookie } from 'hono/cookie'
 import { html } from 'hono/html'
 import type { HtmlEscapedString } from 'hono/utils/html'
 import type { Env } from './env.ts'
-import { STATUS_ORDER, statusLabel } from './panel/format.js'
+import { ROLE_ORDER, STATUS_ORDER, roleFilterLabel, statusLabel } from './panel/format.js'
 import { verifyPassword } from './password.ts'
 import {
   clientIp,
@@ -263,8 +263,9 @@ const environmentBadge = (environment: string): Html =>
     : html`<mark data-theme="light">${environmentLabel(environment)}</mark>`
 
 /**
- * The panel skeleton: a nav header with issuer and environment badge on the left and logout on the right, then the notas list: a
- * status line and a table that the /admin/panel.js module fills. The Sair button has no type attribute on purpose: inside a form it submits anyway, and leaving it off
+ * The panel skeleton: a nav header with issuer and environment badge on the left and logout on the right, then the notas list: the
+ * status and role filters, the ADN sync line, a status line and a table that the /admin/panel.js module fills. The list
+ * merges the notas issued here with the ones the government's ADN distributed to this CNPJ. The Sair button has no type attribute on purpose: inside a form it submits anyway, and leaving it off
  * keeps Pico's full-width and bottom-margin rules for typed submit buttons away, so it takes its content width in the nav.
  */
 const adminPage = (cnpj: string, environment: string, csrf: string): Html =>
@@ -298,12 +299,20 @@ const adminPage = (cnpj: string, environment: string, csrf: string): Html =>
           <option value="">Todas</option>
           ${STATUS_ORDER.map((status) => html`<option value="${status}">${statusLabel(status)}</option>`)}
         </select>
+        <label for="role">Serviços</label>
+        <select id="role" name="role">
+          <option value="">Todos</option>
+          ${ROLE_ORDER.map((role) => html`<option value="${role}">${roleFilterLabel(role)}</option>`)}
+        </select>
+        <p><small id="adn-sync" role="status" aria-live="polite"></small></p>
+        <button type="button" id="adn-sync-now" hidden>Sincronizar com o Sistema Nacional</button>
         <p id="notas-state" role="status"></p>
         <table role="table">
           <thead>
             <tr role="row">
               <th scope="col" role="columnheader">Competência</th>
-              <th scope="col" role="columnheader">Cliente</th>
+              <th scope="col" role="columnheader">Serviço</th>
+              <th scope="col" role="columnheader">Cliente / Prestador</th>
               <th scope="col" role="columnheader">Valor</th>
               <th scope="col" role="columnheader">Número</th>
               <th scope="col" role="columnheader">Situação</th>

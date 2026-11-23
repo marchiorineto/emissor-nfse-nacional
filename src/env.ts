@@ -21,6 +21,8 @@ export interface Env {
   PUBLIC_URL: string
   /** Salted scrypt hash of the panel password, written by `pnpm run admin-password`; empty turns the panel off. */
   ADMIN_PASSWORD: string
+  /** Minutes to wait, once the ADN has nothing new, before an automatic sync asks it again. */
+  ADN_SYNC_COOLDOWN_MINUTES: number
 }
 
 export const envFrom = (vars: Record<string, string | undefined>): Env => ({
@@ -39,4 +41,5 @@ export const envFrom = (vars: Record<string, string | undefined>): Env => ({
   PORT: Number(vars.PORT) || 8080,
   PUBLIC_URL: (vars.PUBLIC_URL ?? '').replace(/\/+$/, ''),
   ADMIN_PASSWORD: (vars.ADMIN_PASSWORD ?? '').trim(),
+  ADN_SYNC_COOLDOWN_MINUTES: Number(vars.ADN_SYNC_COOLDOWN_MINUTES) >= 1 ? Number(vars.ADN_SYNC_COOLDOWN_MINUTES) : 60,
 })

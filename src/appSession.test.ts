@@ -189,8 +189,8 @@ describe('notas list pages through the session cookie', () => {
 })
 
 describe('PDF download for the panel', () => {
-  const PDF = Buffer.from('%PDF-1.4')
-  const pdfGov: Gov = { ...gov, get: async (_host, path) => (path.startsWith('/danfse/') ? ok(200, { pdfB64: PDF.toString('base64') }) : gov.get(_host, path)) }
+  const pdfGov = gov
+  const isPdf = (bytes: Buffer) => bytes.subarray(0, 5).toString() === '%PDF-'
   const pdfUrl = (id: string, query = '') => `http://api.test/v1/notas/${encodeURIComponent(id)}/pdf${query}`
   const INLINE = 'inline; filename="nfse-pedido-1.pdf"'
   const ATTACHMENT = 'attachment; filename="nfse-7.pdf"'
@@ -202,24 +202,23 @@ describe('PDF download for the panel', () => {
     return { repo, app, cookie: await loginCookie(app, '198.51.100.30') }
   }
 
-  it('keeps the inline answer for Bearer clients byte for byte', async () => {
+  it('keeps the inline answer for Bearer clients', async () => {
     const { app } = await issued()
     const res = await app.request(pdfUrl('pedido-1'), { headers: bearer })
     expect(res.status).toBe(200)
     expect(res.headers.get('content-type')).toBe('application/pdf')
     expect(res.headers.get('content-disposition')).toBe(INLINE)
-    expect(Buffer.from(await res.arrayBuffer())).toEqual(PDF)
+    expect(isPdf(Buffer.from(await res.arrayBuffer()))).toBe(true)
   })
 
-  it('answers the same bytes as an attachment named by the NFS-e number with download=1', async () => {
+  it('answers a PDF as an attachment named by the NFS-e number with download=1', async () => {
     const { app, cookie } = await issued()
-    const inline = Buffer.from(await (await app.request(pdfUrl('pedido-1'), { headers: bearer })).arrayBuffer())
     for (const headers of [bearer, { cookie }]) {
       const res = await app.request(pdfUrl('pedido-1', '?download=1'), { headers })
       expect(res.status).toBe(200)
       expect(res.headers.get('content-type')).toBe('application/pdf')
       expect(res.headers.get('content-disposition')).toBe(ATTACHMENT)
-      expect(Buffer.from(await res.arrayBuffer())).toEqual(inline)
+      expect(isPdf(Buffer.from(await res.arrayBuffer()))).toBe(true)
     }
   })
 

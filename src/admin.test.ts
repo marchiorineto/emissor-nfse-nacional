@@ -406,7 +406,7 @@ describe('panel security headers', () => {
     }
   })
 
-  it('renders the notas shell: a pt-BR noscript line, a status line and a six-column table over an empty body', async () => {
+  it('renders the notas shell: a pt-BR noscript line, the filters, the ADN sync line and a seven-column table over an empty body', async () => {
     const app = setup()
     const { cookie } = await session(app)
     const body = await (await app.request('http://api.test/admin', { headers: { cookie } })).text()
@@ -427,6 +427,15 @@ describe('panel security headers', () => {
       ['pending', 'Pendente'],
       ['unknown', 'Sem resposta'],
     ])
+    const roles = /<select id="role"[^>]*>([\s\S]*?)<\/select>/.exec(body)?.[1] ?? ''
+    expect([...roles.matchAll(/<option value="([^"]*)">([^<]*)<\/option>/g)].map((match) => [match[1], match[2]])).toEqual([
+      ['', 'Todos'],
+      ['issuer', 'Prestados (emitidas)'],
+      ['taker', 'Tomados (recebidas)'],
+      ['intermediary', 'Intermediados'],
+    ])
+    expect(body).toContain('<small id="adn-sync" role="status" aria-live="polite"></small>')
+    expect(body).toContain('<button type="button" id="adn-sync-now" hidden>Sincronizar com o Sistema Nacional</button>')
     expect(body).toContain('<button type="button" id="more" hidden>Carregar mais</button>')
     expect(body).toContain('<dialog id="nota-dialog" aria-labelledby="nota-title">')
     expect(body).toContain('<h2 id="nota-title"></h2>')
@@ -434,7 +443,7 @@ describe('panel security headers', () => {
     expect(body).toContain('<div id="nota-body"></div>')
     expect(body).toContain('<form method="dialog"><button>Fechar</button></form>')
     expect(body).toMatch(
-      /<th[^>]*>Competência<\/th>\s*<th[^>]*>Cliente<\/th>\s*<th[^>]*>Valor<\/th>\s*<th[^>]*>Número<\/th>\s*<th[^>]*>Situação<\/th>\s*<th[^>]*>PDF<\/th>/,
+      /<th[^>]*>Competência<\/th>\s*<th[^>]*>Serviço<\/th>\s*<th[^>]*>Cliente \/ Prestador<\/th>\s*<th[^>]*>Valor<\/th>\s*<th[^>]*>Número<\/th>\s*<th[^>]*>Situação<\/th>\s*<th[^>]*>PDF<\/th>/,
     )
   })
 

@@ -1,8 +1,11 @@
-// The panel's browser module: reads GET /v1/notas with the session cookie and renders the list.
+// The panel's browser module: reads GET /v1/notas with the session cookie and renders the list, which merges the notas
+// issued here with the ones the government's ADN distributed (include=adn). While the page is visible it also keeps the
+// ADN mirror up to date through POST /v1/adn/sync; the server decides how often the ADN is actually asked.
 // Every API string reaches the DOM through textContent; nothing here ever parses markup or sets a style.
 import {
   detailSections,
   errorBoxes,
+  filterSearch,
   formatBrl,
   hasMore,
   isAlertStatus,
@@ -11,19 +14,24 @@ import {
   notaHash,
   numberCell,
   parseNotaHash,
+  parseRole,
   parseStatus,
+  partyCell,
   pdfFilename,
   pdfHref,
+  roleLabel,
   statusLabel,
   statusNotice,
-  statusSearch,
-  takerCell,
 } from './format.js'
 
 const body = document.getElementById('notas-body')
 const state = document.getElementById('notas-state')
 const table = body.closest('table')
 const select = document.getElementById('status')
+const roleSelect = document.getElementById('role')
+const syncLine = document.getElementById('adn-sync')
+const syncButton = document.getElementById('adn-sync-now')
+const csrf = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') ?? ''
 const more = document.getElementById('more')
 const dialog = document.getElementById('nota-dialog')
 const dialogTitle = document.getElementById('nota-title')
@@ -33,6 +41,17 @@ const dialogBody = document.getElementById('nota-body')
 /** Fetches a /v1 path with the session cookie as the only credential; a 401 sends the browser to the login. */
 const api = async (path) => {
   const res = await fetch(path, { credentials: 'same-origin', headers: { accept: 'application/json' } })
+  if (res.status === 401) {
+    location.assign('/login')
+    throw new Error('unauthorized')
+  }
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
+/** POSTs to a /v1 path with the session cookie and its CSRF token; same errors as api. */
+const post = async (path) => {
+  const res = await fetch(path, { method: 'POST', credentials: 'same-origin', headers: { accept: 'application/json', 'x-csrf-token': csrf } })
   if (res.status === 401) {
     location.assign('/login')
     throw new Error('unauthorized')
@@ -63,9 +82,10 @@ const renderRow = (nota) => {
   tr.dataset.status = nota.status
 
   tr.append(Object.assign(cell('Competência'), { textContent: listDate(nota) }))
+  tr.append(Object.assign(cell('Serviço'), { textContent: roleLabel(nota.role) }))
 
-  const taker = takerCell(nota.request.taker)
-  const client = cell('Cliente')
+  const taker = partyCell(nota)
+  const client = cell('Cliente / Prestador')
   client.append(text('span', taker.name))
   if (taker.detail) client.append(text('small', taker.detail))
   tr.append(client)
@@ -111,7 +131,7 @@ const say = (message) => {
  * `nota` is the id the dialog shows ('' when closed), taken from the URL hash, and `dialogGeneration` retires the response of
  * a nota the admin has already left.
  */
-const view = { status: null, last: null, generation: 0, nota: '', dialogGeneration: 0 }
+const view = { status: null, role: null, last: null, generation: 0, nota: '', dialogGeneration: 0 }
 
 /** Loads one page of the current filter: the newest one (replacing the rows) or, appending, the page after the last row shown. */
 const loadPage = async ({ append }) => {
@@ -126,7 +146,7 @@ const loadPage = async ({ append }) => {
   more.disabled = true
   table.setAttribute('aria-busy', 'true')
   try {
-    const { notas } = await api(listQuery({ status: view.status, last: append ? view.last : undefined }))
+    const { notas } = await api(listQuery({ status: view.status, role: view.role, last: append ? view.last : undefined }))
     if (generation !== view.generation) return
     body.append(...notas.map(renderRow))
     if (notas.length > 0) view.last = { createdAt: notas[notas.length - 1].createdAt, id: notas[notas.length - 1].id }
@@ -227,9 +247,12 @@ const openNota = async (id) => {
 /** Brings the list and the dialog in line with the URL, the one source of truth for both; does nothing for what is unchanged. */
 const sync = () => {
   const status = parseStatus(location.search)
-  if (status !== view.status) {
+  const role = parseRole(location.search)
+  if (status !== view.status || role !== view.role) {
     view.status = status
+    view.role = role
     select.value = status
+    roleSelect.value = role
     loadPage({ append: false })
   }
   const id = parseNotaHash(location.hash)
@@ -256,12 +279,78 @@ dialog.addEventListener('click', (event) => {
   if (event.target === dialog) dialog.close()
 })
 
-select.addEventListener('change', () => {
-  history.pushState(null, '', location.pathname + statusSearch(select.value))
+const onFilter = () => {
+  history.pushState(null, '', location.pathname + filterSearch({ status: select.value, role: roleSelect.value }))
   sync()
-})
+}
+select.addEventListener('change', onFilter)
+roleSelect.addEventListener('change', onFilter)
 window.addEventListener('popstate', sync)
 window.addEventListener('hashchange', sync)
 more.addEventListener('click', () => loadPage({ append: true }))
 
+/** How often a visible panel asks the server to sync; the server skips the ADN until its cooldown is over. */
+const SYNC_EVERY_MS = 2 * 60_000
+const clock = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', dateStyle: 'short', timeStyle: 'short' })
+const adn = { running: false, off: false }
+
+/** The sync line: progress while a run goes on, otherwise how many notas the mirror holds, when it was updated, and the last error. */
+const showSync = (result, isRunning) => {
+  const count = `${result.count} nota${result.count === 1 ? '' : 's'} do Sistema Nacional`
+  if (isRunning) syncLine.textContent = `Sincronizando com o Sistema Nacional… ${count} até agora (NSU ${result.lastNsu}).`
+  else if (result.error) syncLine.textContent = `${count}. A última sincronização falhou: ${result.error}`
+  else if (result.lastRunAt) syncLine.textContent = `${count}, atualizado em ${clock.format(new Date(result.caughtUpAt ?? result.lastRunAt))}.`
+  else syncLine.textContent = 'Ainda não sincronizado com o Sistema Nacional.'
+}
+
+/**
+ * Runs sync steps until the server says the mirror is up to date, waiting, or failing (a first load takes several steps,
+ * about 20 s each), then reloads the list when anything new came in. Only one loop at a time; hidden tabs stop after the
+ * current step.
+ */
+const syncAdn = async (force = false) => {
+  if (adn.running || adn.off) return
+  adn.running = true
+  syncButton.disabled = true
+  let fetched = 0
+  try {
+    for (let first = true; ; first = false) {
+      const result = await post(`/v1/adn/sync${force && first ? '?force=1' : ''}`)
+      fetched += result.fetched
+      const isDone = result.error || result.caughtUp || result.skipped || document.visibilityState !== 'visible'
+      showSync(result, !isDone)
+      if (isDone) break
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message === 'HTTP 404') {
+      adn.off = true
+      syncLine.textContent = ''
+      syncButton.hidden = true
+    } else if (!(error instanceof Error && error.message === 'unauthorized')) {
+      syncLine.textContent = 'Não foi possível sincronizar com o Sistema Nacional. Tente de novo.'
+    }
+  } finally {
+    adn.running = false
+    syncButton.disabled = false
+  }
+  if (fetched > 0) loadPage({ append: false })
+}
+
+syncButton.addEventListener('click', () => syncAdn(true))
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') syncAdn()
+})
+setInterval(() => {
+  if (document.visibilityState === 'visible') syncAdn()
+}, SYNC_EVERY_MS)
+
 sync()
+api('/v1/adn/sync')
+  .then((result) => {
+    syncButton.hidden = false
+    showSync(result, false)
+    syncAdn()
+  })
+  .catch(() => {
+    adn.off = true
+  })

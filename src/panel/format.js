@@ -18,6 +18,18 @@ const STATUS_LABELS = {
 /** The pt-BR label of a status; a value the panel does not know is returned as given. */
 export const statusLabel = (status) => STATUS_LABELS[status] ?? status
 
+/** How this CNPJ appears on a nota, in the order the filter offers them (the ADN's `role`; a nota issued here is `issuer`). */
+export const ROLE_ORDER = ['issuer', 'taker', 'intermediary']
+
+const ROLE_LABELS = { issuer: 'Prestado', taker: 'Tomado', intermediary: 'Intermediado', other: 'Outro' }
+const ROLE_FILTER_LABELS = { issuer: 'Prestados (emitidas)', taker: 'Tomados (recebidas)', intermediary: 'Intermediados' }
+
+/** The Serviço column: whether this CNPJ provided, took or intermediated the service; a nota without a role was issued here. */
+export const roleLabel = (role) => ROLE_LABELS[role ?? 'issuer'] ?? role
+
+/** The label of a role in the filter. */
+export const roleFilterLabel = (role) => ROLE_FILTER_LABELS[role] ?? role
+
 /** Whether the status needs emphasis in the list: the government refused it or never answered. */
 export const isAlertStatus = (status) => status === 'rejected' || status === 'unknown'
 
@@ -62,13 +74,28 @@ export const takerCell = (taker) => {
   return { name: taker.name, detail: '' }
 }
 
-/** The Número cell: the NFS-e number when the nota has one, otherwise the DPS number marked muted. */
-export const numberCell = (nota) => (nota.nfseNumber ? { text: `NFS-e ${nota.nfseNumber}`, muted: false } : { text: `DPS ${nota.dpsNumber}`, muted: true })
+/**
+ * The Cliente / Prestador cell: the other side of the nota. For a service this CNPJ took, that is the provider (with
+ * "Prestador" below when it has no CPF/CNPJ); otherwise the taker, as takerCell shows it.
+ */
+export const partyCell = (nota) => {
+  if (nota.role !== 'taker') return takerCell(nota.request.taker)
+  const issuer = nota.issuer ?? {}
+  return { name: issuer.name || '— (não informado)', detail: issuer.taxId ? formatTaxId(issuer.taxId) : 'Prestador' }
+}
 
-/** The URL of one page of the list: limit always first, status when set, and the cursor after the last row shown. */
-export const listQuery = ({ status, last } = {}) => {
-  const params = new URLSearchParams({ limit: String(PAGE_SIZE) })
+/** The Número cell: the NFS-e number when the nota has one, otherwise the DPS number marked muted. */
+export const numberCell = (nota) =>
+  nota.nfseNumber ? { text: `NFS-e ${nota.nfseNumber}`, muted: false } : { text: nota.dpsNumber === undefined ? 'Sem número' : `DPS ${nota.dpsNumber}`, muted: true }
+
+/**
+ * The URL of one page of the list: limit always first, then the ADN notas merged in (include=adn), the status and the
+ * role when set, and the cursor after the last row shown.
+ */
+export const listQuery = ({ status, role, last } = {}) => {
+  const params = new URLSearchParams({ limit: String(PAGE_SIZE), include: 'adn' })
   if (status) params.set('status', status)
+  if (role) params.set('role', role)
   if (last) {
     params.set('before', last.createdAt)
     params.set('beforeId', last.id)
@@ -88,6 +115,21 @@ export const parseStatus = (search) => {
 /** The query string that selects a status: '' for Todas, otherwise '?status=<status>'. */
 export const statusSearch = (status) => (status ? `?${new URLSearchParams({ status })}` : '')
 
+/** The role the URL's query string asks for when it is one of ROLE_ORDER, otherwise '' (Todos); never throws. */
+export const parseRole = (search) => {
+  const role = new URLSearchParams(search).get('role')
+  return ROLE_ORDER.includes(role) ? role : ''
+}
+
+/** The query string of both filters: each only when set, status first; '' when neither is. */
+export const filterSearch = ({ status, role }) => {
+  const params = new URLSearchParams()
+  if (status) params.set('status', status)
+  if (role) params.set('role', role)
+  const query = params.toString()
+  return query ? `?${query}` : ''
+}
+
 /**
  * The download link of a nota's PDF, or undefined when the nota has no access key (D-18, D-20). It is relative and same-origin
  * on purpose: the `download` attribute only works same-origin, and the signed public links in the API response are built from
@@ -96,7 +138,7 @@ export const statusSearch = (status) => (status ? `?${new URLSearchParams({ stat
 export const pdfHref = (nota) => (nota.accessKey ? `/v1/notas/${encodeURIComponent(nota.id)}/pdf?download=1` : undefined)
 
 /** The name the PDF is saved as, the same one the server's download answer carries: nfse-<NFS-e number, else DPS number>.pdf. */
-export const pdfFilename = (nota) => `nfse-${nota.nfseNumber ?? nota.dpsNumber}.pdf`
+export const pdfFilename = (nota) => `nfse-${nota.nfseNumber ?? nota.dpsNumber ?? 'nota'}.pdf`
 
 /** The id a URL hash names (#nota=<id>), or '' when there is none; a malformed hash never throws. */
 export const parseNotaHash = (hash) => new URLSearchParams(hash.replace(/^#/, '')).get('nota') ?? ''
@@ -124,14 +166,44 @@ const present = (rows) => rows.filter(([, value]) => value !== undefined && valu
 const resumoRows = (nota) =>
   present([
     ['Situação', statusLabel(nota.status)],
+    ['Serviço', roleLabel(nota.role)],
     ['Número da NFS-e', nota.nfseNumber],
-    ['Número da DPS', String(nota.dpsNumber)],
+    ['Número da DPS', nota.dpsNumber === undefined ? undefined : String(nota.dpsNumber)],
     ['Valor', formatBrl(nota.request.valueCents)],
-    ['Criada em', formatDateTime(nota.createdAt)],
+    ['Criada em', nota.source === 'adn' ? undefined : formatDateTime(nota.createdAt)],
     ['Emitida em', nota.issuedAt ? formatDateTime(nota.issuedAt) : undefined],
     ['Cancelada em', nota.canceledAt ? formatDateTime(nota.canceledAt) : undefined],
-    ['Identificador', nota.id],
+    ['Identificador', nota.source === 'adn' ? undefined : nota.id],
+    ['Origem', nota.source === 'adn' ? 'Sistema Nacional (emitida fora deste emissor ou recebida)' : undefined],
   ])
+
+const issuerRows = (issuer) =>
+  present([
+    ['Nome', issuer?.name],
+    ['CPF/CNPJ', issuer?.taxId ? formatTaxId(issuer.taxId) : undefined],
+  ])
+
+const EVENT_LABELS = {
+  CANCELAMENTO: 'Cancelamento',
+  CANCELAMENTO_POR_SUBSTITUICAO: 'Cancelamento por substituição',
+  CANCELAMENTO_DEFERIDO_ANALISE_FISCAL: 'Cancelamento deferido (análise fiscal)',
+  CANCELAMENTO_INDEFERIDO_ANALISE_FISCAL: 'Cancelamento indeferido (análise fiscal)',
+  SOLICITACAO_CANCELAMENTO_ANALISE_FISCAL: 'Pedido de cancelamento (análise fiscal)',
+  CANCELAMENTO_POR_OFICIO: 'Cancelamento de ofício',
+  CONFIRMACAO_PRESTADOR: 'Confirmação do prestador',
+  CONFIRMACAO_TOMADOR: 'Confirmação do tomador',
+  CONFIRMACAO_INTERMEDIARIO: 'Confirmação do intermediário',
+  CONFIRMACAO_TACITA: 'Confirmação tácita',
+  REJEICAO_PRESTADOR: 'Rejeição do prestador',
+  REJEICAO_TOMADOR: 'Rejeição do tomador',
+  REJEICAO_INTERMEDIARIO: 'Rejeição do intermediário',
+  ANULACAO_REJEICAO: 'Anulação da rejeição',
+  BLOQUEIO_POR_OFICIO: 'Bloqueio de ofício',
+  DESBLOQUEIO_POR_OFICIO: 'Desbloqueio de ofício',
+}
+
+/** The events the ADN distributed for a nota, oldest first, as label and date rows. */
+const eventRows = (events) => (Array.isArray(events) ? events.map((event) => [EVENT_LABELS[event.type] ?? event.type, formatDateTime(event.at)]) : [])
 
 const takerRows = (taker) => {
   if (!taker) return [['Nome', '— (não informado)']]
@@ -177,20 +249,21 @@ const replacementRows = (nota) => {
   const replaced = replaces?.id ? { text: replaces.id, href: notaHash(replaces.id) } : replaces?.accessKey
   return present([
     ['Substitui', replaced],
-    ['Motivo da substituição', replaces ? `${replaces.reasonCode}${replaces.reason ? ` – ${replaces.reason}` : ''}` : undefined],
+    ['Motivo da substituição', replaces?.reasonCode ? `${replaces.reasonCode}${replaces.reason ? ` – ${replaces.reason}` : ''}` : undefined],
     ['Substituída por', nota.replacedBy ? { text: nota.replacedBy, href: notaHash(nota.replacedBy) } : undefined],
   ])
 }
 
 /**
- * The sections of the details dialog as plain data, always in the order Resumo, Tomador, Serviço, Documento, Exportação,
- * Substituição and only with rows that have a value; a section without rows is left out. Values are plain strings or
+ * The sections of the details dialog as plain data, always in the order Resumo, Prestador (a nota this CNPJ did not issue),
+ * Tomador, Serviço, Documento, Exportação, Substituição, Eventos (an ADN nota) and only with rows that have a value; a section without rows is left out. Values are plain strings or
  * { text, href } links built here from #nota= hashes, the relative PDF path and an https URL.
  */
 export const detailSections = (nota) => {
   const request = nota.request
   const sections = [
     { title: 'Resumo', rows: resumoRows(nota) },
+    { title: 'Prestador', rows: nota.role && nota.role !== 'issuer' ? issuerRows(nota.issuer) : [] },
     { title: 'Tomador', rows: takerRows(request.taker) },
     {
       title: 'Serviço',
@@ -204,6 +277,7 @@ export const detailSections = (nota) => {
     { title: 'Documento', rows: documentRows(nota) },
     { title: 'Exportação', rows: request.export ? exportRows(request.export) : [] },
     { title: 'Substituição', rows: replacementRows(nota) },
+    { title: 'Eventos', rows: eventRows(nota.events) },
   ]
   return sections.filter((section) => section.rows.length > 0)
 }

@@ -149,17 +149,17 @@ describe('statuses', () => {
 describe('listQuery', () => {
   it('always sends the page size first', () => {
     expect(PAGE_SIZE).toBe(20)
-    expect(listQuery()).toBe('/v1/notas?limit=20')
+    expect(listQuery()).toBe('/v1/notas?limit=20&include=adn')
   })
 
   it('adds the status only when it is set', () => {
-    expect(listQuery({ status: 'rejected' })).toBe('/v1/notas?limit=20&status=rejected')
-    expect(listQuery({ status: '' })).toBe('/v1/notas?limit=20')
+    expect(listQuery({ status: 'rejected' })).toBe('/v1/notas?limit=20&include=adn&status=rejected')
+    expect(listQuery({ status: '' })).toBe('/v1/notas?limit=20&include=adn')
   })
 
   it('adds the cursor of the last row, encoded', () => {
     expect(listQuery({ status: '', last: { createdAt: '2026-11-20T12:00:00.000Z', id: 'a b&c' } })).toBe(
-      '/v1/notas?limit=20&before=2026-11-20T12%3A00%3A00.000Z&beforeId=a+b%26c',
+      '/v1/notas?limit=20&include=adn&before=2026-11-20T12%3A00%3A00.000Z&beforeId=a+b%26c',
     )
   })
 })
@@ -167,7 +167,7 @@ describe('listQuery', () => {
 describe('listQuery with a status and a cursor', () => {
   it('puts limit, status and the cursor together in that order', () => {
     expect(listQuery({ status: 'issued', last: { createdAt: '2026-11-20T12:00:00.000Z', id: 'n-21' } })).toBe(
-      '/v1/notas?limit=20&status=issued&before=2026-11-20T12%3A00%3A00.000Z&beforeId=n-21',
+      '/v1/notas?limit=20&include=adn&status=issued&before=2026-11-20T12%3A00%3A00.000Z&beforeId=n-21',
     )
   })
 })
@@ -329,7 +329,7 @@ describe('detailSections', () => {
     const canceled = rowsOf(detailSections(issued({ status: 'canceled', canceledAt: '2026-11-21T15:30:00Z' })), 'Resumo')
     expect(canceled['Cancelada em']).toBe('21/11/2026, 12:30')
     const bare = rowsOf(detailSections(nota({ status: 'pending' })), 'Resumo')
-    expect(Object.keys(bare)).toEqual(['Situação', 'Número da DPS', 'Valor', 'Criada em', 'Identificador'])
+    expect(Object.keys(bare)).toEqual(['Situação', 'Serviço', 'Número da DPS', 'Valor', 'Criada em', 'Identificador'])
   })
 
   it('shows a missing taker as one row, Nome — (não informado)', () => {

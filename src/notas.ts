@@ -125,7 +125,7 @@ const govErrors = (status: number, json: Record<string, unknown>): GovError[] =>
 }
 
 export const createNotas = ({ repo, gov, config, now = () => new Date() }: { repo: Repo; gov: Gov; config: Config; now?: () => Date }): Notas => {
-  const { sefin, adn } = hosts[config.environment]
+  const { sefin } = hosts[config.environment]
 
   const save = async (nota: Nota, changes: Partial<Nota>): Promise<Nota> => {
     const next = { ...nota, ...changes, updatedAt: now().toISOString() }
@@ -261,15 +261,14 @@ export const createNotas = ({ repo, gov, config, now = () => new Date() }: { rep
     return save(nota, { cancelErrors: errors })
   }
 
-  /** The government's DANFSe when its service answers; otherwise our rendering of the authorized XML. */
+  /**
+   * Our rendering of the authorized XML. The ADN's DANFSe API was turned off on 2026-08-03 (the PDF now comes only from
+   * the government's portals), so it is no longer asked.
+   */
   const pdf: Notas['pdf'] = async (id) => {
     const nota = await repo.get(id)
     if (!nota?.accessKey) return null
-    const result = await gov.get(adn, `/danfse/${nota.accessKey}`)
-    if (result.reached && result.status === 200 && typeof result.json.pdfB64 === 'string') {
-      return Uint8Array.from(atob(result.json.pdfB64), (char) => char.charCodeAt(0))
-    }
-    if (!nota.nfseXml) throw notaError(502, 'DANFSe not available right now')
+    if (!nota.nfseXml) throw notaError(502, 'the authorized XML of this nota is not stored, so there is no PDF')
     return renderDanfse(nota.nfseXml, { isCanceled: nota.status === 'canceled' || nota.status === 'replaced' })
   }
 

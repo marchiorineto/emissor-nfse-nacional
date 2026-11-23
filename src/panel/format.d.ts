@@ -2,8 +2,18 @@
 import type { Taker } from '../dps.ts'
 import type { GovError, Nota, NotaStatus } from '../notas.ts'
 
-/** A nota as GET /v1/notas returns it: every field except the NFS-e XML, plus the public links of an issued nota. */
-export type NotaView = Omit<Nota, 'nfseXml'> & { links?: Record<string, string> }
+/**
+ * A nota as GET /v1/notas returns it: every field except the NFS-e XML, plus the public links of an issued nota. With
+ * include=adn it also says where it comes from and this CNPJ's role; an ADN nota has no DPS number but its issuer and events.
+ */
+export type NotaView = Omit<Nota, 'nfseXml' | 'dpsNumber'> & {
+  dpsNumber?: number
+  links?: Record<string, string>
+  source?: 'local' | 'adn'
+  role?: string
+  issuer?: { taxId?: string; name?: string }
+  events?: Array<{ type: string; at: string }>
+}
 
 /** Notas per page. */
 export const PAGE_SIZE: 20
@@ -11,6 +21,18 @@ export const PAGE_SIZE: 20
 export const STATUS_ORDER: readonly NotaStatus[]
 /** The pt-BR label of a status; an unknown value comes back as given. */
 export function statusLabel(status: string): string
+/** The roles in the order the filter offers them. */
+export const ROLE_ORDER: readonly string[]
+/** The Serviço column: Prestado, Tomado or Intermediado; no role means issued here. */
+export function roleLabel(role?: string): string
+/** The label of a role in the filter. */
+export function roleFilterLabel(role: string): string
+/** The Cliente / Prestador cell: the provider of a service this CNPJ took, otherwise the taker. */
+export function partyCell(nota: Pick<NotaView, 'role' | 'issuer' | 'request'>): { name: string; detail: string }
+/** The role named by a query string when it is a known one, otherwise ''; never throws. */
+export function parseRole(search: string): string
+/** The query string of both filters, each only when set; '' when neither is. */
+export function filterSearch(filters: { status?: string; role?: string }): string
 /** Whether the status gets emphasis: rejected or unknown. */
 export function isAlertStatus(status: string): boolean
 /** Integer cents as R$ 1.234,56. */
@@ -30,7 +52,7 @@ export function takerCell(taker?: Taker): { name: string; detail: string }
 /** The Número cell: NFS-e number, or the DPS number marked muted. */
 export function numberCell(nota: Pick<NotaView, 'nfseNumber' | 'dpsNumber'>): { text: string; muted: boolean }
 /** The URL of one list page: limit first, then status and the cursor after the last row shown. */
-export function listQuery(options?: { status?: string; last?: Pick<NotaView, 'createdAt' | 'id'> }): string
+export function listQuery(options?: { status?: string; role?: string; last?: Pick<NotaView, 'createdAt' | 'id'> }): string
 /** The status named by a query string when it is a known one, otherwise '' (Todas); never throws. */
 export function parseStatus(search: string): NotaStatus | ''
 /** The query string for a status filter: '' for Todas, otherwise '?status=<status>'. */

@@ -122,6 +122,7 @@ Preencha o `.env`:
 | `PORT` | A porta da API. O padrão é `8080`. |
 | `PUBLIC_URL` | O endereço público da API, por exemplo `https://nfse.seudominio.com.br`, quando ela fica atrás de um proxy com HTTPS. É o endereço que vai nos links das notas. |
 | `ADMIN_PASSWORD` | O hash da senha do painel (`/admin`). Não escreva à mão: use `pnpm run admin-password` ([veja como](#criar-ou-trocar-a-senha)). Vazio desliga o painel. |
+| `ADN_SYNC_COOLDOWN_MINUTES` | Quantos minutos esperar, depois que o Sistema Nacional não tem nada novo, antes de perguntar de novo ([veja a sincronização](#notas-do-sistema-nacional)). O padrão é `60`. |
 
 ### 2. Adicione o certificado
 
@@ -253,6 +254,24 @@ partir do login, sem renovação. O botão "Sair" apaga a sessão deste navegado
 
 Uma senha errada mostra "Senha incorreta.", e as tentativas erradas seguidas do mesmo endereço esperam cada vez mais,
 de 1 até 30 segundos.
+
+### Notas do Sistema Nacional
+
+O painel mostra numa lista só as notas emitidas por este emissor e as que o Sistema Nacional (o ADN) distribui para o
+CNPJ do certificado: as emitidas em outro lugar (no portal do governo, por exemplo), as recebidas como tomador e as
+intermediadas. O filtro **Serviços** separa prestados (emitidas), tomados (recebidas) e intermediados.
+
+O ADN só entrega os documentos depois de um número sequencial (NSU), 50 de cada vez, sem filtro de data. Por isso o
+emissor guarda uma cópia no banco (as tabelas `adn_nfse`, `adn_events` e `adn_sync`), sem o XML:
+
+- **Carga inicial, uma vez só:** `pnpm run adn-sync` lê todo o histórico do CNPJ e sai. Pode interromper e rodar de novo:
+  ele continua do último NSU. Se as tabelas se perderem, o mesmo comando as refaz.
+- **Depois, sozinho:** enquanto o painel está aberto, ele pede uma sincronização a cada 2 minutos. O servidor só chama o
+  ADN quando passou o tempo de `ADN_SYNC_COOLDOWN_MINUTES` desde a última vez em que não havia nada novo. O botão
+  **Sincronizar com o Sistema Nacional** encurta essa espera para 1 minuto. Sem o painel aberto, o ADN não é chamado.
+
+O PDF de uma nota que só o ADN conhece é montado aqui, a partir do XML que a SEFIN devolve na hora. A situação
+(cancelada, substituída) vem dos eventos que o ADN distribui.
 
 ### Atrás de um proxy
 
@@ -413,6 +432,12 @@ emitida. O prazo e as condições para substituir
 `GET /v1/notas?status=issued&limit=50`: o `status` filtra (`pending`, `unknown`, `issued`, `rejected`, `canceled` ou
 `replaced`), e
 o `limit` vai até 100 (o padrão é 50). Para a página seguinte, passe em `before` o `createdAt` da última nota da página.
+
+Com `include=adn`, a lista junta as notas do Sistema Nacional ([veja acima](#notas-do-sistema-nacional)). Cada nota
+traz então `source` (`local` ou `adn`) e `role` (`issuer`, `taker`, `intermediary` ou `other`), e `role` também
+filtra. Uma nota do ADN tem a chave de acesso como `id`: `GET /v1/notas/{chave}` e `GET /v1/notas/{chave}/pdf` também
+funcionam para ela. `GET /v1/adn/sync` mostra onde a sincronização está; `POST /v1/adn/sync` roda um passo
+(`?force=1` encurta a espera).
 
 ### Fluxo recomendado
 

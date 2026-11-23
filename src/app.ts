@@ -2,9 +2,10 @@ import { createHmac } from 'node:crypto'
 import { Hono, type MiddlewareHandler } from 'hono'
 import { getCookie } from 'hono/cookie'
 import { registerAdmin } from './admin.ts'
+import { ADN_ROLES, adnView, type AdnRole, type AdnStore, type AdnSync } from './adn.ts'
 import { configFrom, configProblems } from './config.ts'
 import { hosts, type Environment } from './dps.ts'
-import { publicLookupUrl } from './danfse.ts'
+import { publicLookupUrl, renderDanfse } from './danfse.ts'
 import type { Env } from './env.ts'
 import type { Certificate } from './gov.ts'
 import { createNotas, isNotaError, type Gov, type Nota, type NotaStatus, type Repo } from './notas.ts'
@@ -19,7 +20,11 @@ export interface AppDeps {
   certificate: () => Certificate | { error: string }
   /** Clock in milliseconds; tests inject it. Defaults to Date.now. */
   now?: () => number
+  /** The mirror of the ADN distribution; without it the list holds only the notas issued here. */
+  adn?: { store: AdnStore; sync: AdnSync }
 }
+
+const ACCESS_KEY = /^\d{50}$/
 
 const NOTA_STATUSES: readonly NotaStatus[] = ['pending', 'unknown', 'issued', 'rejected', 'canceled', 'replaced']
 const MAX_LIST = 100
@@ -46,7 +51,7 @@ const listLimit = (value: string | undefined): number => {
   return limit >= 1 ? Math.min(limit, MAX_LIST) : DEFAULT_LIST
 }
 
-export const createApp = ({ env, repo, gov, certificate, now = Date.now }: AppDeps): Hono => {
+export const createApp = ({ env, repo, gov, certificate, now = Date.now, adn }: AppDeps): Hono => {
   const notas = () => createNotas({ repo, gov, config: configFrom(env) })
 
   /** Signature of the public links of a nota: whoever has the link (the buyer's email) can download it, nobody can guess one. */
@@ -135,19 +140,59 @@ export const createApp = ({ env, repo, gov, certificate, now = Date.now }: AppDe
     return c.json(view(originOf(c.req.url), nota), STATUS_CODE[nota.status])
   })
 
+  /**
+   * The notas issued here, newest first. With `include=adn`, one list with the notas the government's ADN distributed to
+   * this CNPJ (issued elsewhere, received as taker or intermediary); each then carries `source` and `role`, and `role`
+   * filters by it.
+   */
   app.get('/v1/notas', async (c) => {
     const status = c.req.query('status') as NotaStatus | undefined
     if (status && !NOTA_STATUSES.includes(status)) return c.json({ error: `status: one of ${NOTA_STATUSES.join(', ')}` }, 400)
     const limit = listLimit(c.req.query('limit'))
-    const list = await notas().list({ status, limit, before: c.req.query('before'), beforeId: c.req.query('beforeId') })
+    const before = c.req.query('before')
+    const beforeId = c.req.query('beforeId')
     const origin = originOf(c.req.url)
+    if (adn && c.req.query('include') === 'adn') {
+      const role = c.req.query('role') as AdnRole | undefined
+      if (role && !ADN_ROLES.includes(role)) return c.json({ error: `role: one of ${ADN_ROLES.join(', ')}` }, 400)
+      const list = adn.store.list({ status, role, limit, before, beforeId })
+      return c.json({
+        notas: list.map((item) => (item.source === 'local' ? { ...view(origin, item.nota), source: 'local', role: 'issuer' } : adnView(item.nota))),
+      })
+    }
+    const list = await notas().list({ status, limit, before, beforeId })
     return c.json({ notas: list.map((nota) => view(origin, nota)) })
   })
 
+  /** A nota issued here by its id; otherwise, when the id is an access key the ADN distributed, that nota. */
   app.get('/v1/notas/:id', async (c) => {
-    const nota = await notas().get(c.req.param('id'))
-    return nota ? c.json(view(originOf(c.req.url), nota, c.req.query('xml') === '1')) : c.json({ error: 'nota not found' }, 404)
+    const id = c.req.param('id')
+    const nota = await notas().get(id)
+    if (nota) return c.json(view(originOf(c.req.url), nota, c.req.query('xml') === '1'))
+    const fromAdn = adn && ACCESS_KEY.test(id) ? adn.store.get(id) : null
+    return fromAdn ? c.json(adnView(fromAdn)) : c.json({ error: 'nota not found' }, 404)
   })
+
+  /** Where the ADN mirror stands; POST runs a sync step (`?force=1` skips most of the wait after the last one). */
+  app.get('/v1/adn/sync', (c) => (adn ? c.json(adn.sync.status()) : c.json({ error: 'ADN sync is off' }, 404)))
+  app.post('/v1/adn/sync', async (c) => {
+    if (!adn) return c.json({ error: 'ADN sync is off' }, 404)
+    const result = await adn.sync.run({ force: c.req.query('force') === '1' })
+    if (result.fetched || result.error) console.log('nfse: adn sync', { fetched: result.fetched, lastNsu: result.lastNsu, caughtUp: result.caughtUp, error: result.error })
+    return c.json(result)
+  })
+
+  /** The PDF of a nota only the ADN knows: its authorized XML from SEFIN, rendered here. */
+  const adnPdf = async (accessKey: string): Promise<{ pdf: Uint8Array; number: string } | null> => {
+    const nota = adn?.store.get(accessKey)
+    if (!nota) return null
+    const { sefin } = hosts[env.NFSE_ENVIRONMENT as Environment]
+    const result = await gov.get(sefin, `/SefinNacional/nfse/${accessKey}`)
+    const xml = result.reached && result.status === 200 ? result.json.nfseXml : undefined
+    if (typeof xml !== 'string') throw Object.assign(new Error('the government did not return the XML of this nota; try again'), { status: 502 })
+    const pdf = await renderDanfse(xml, { isCanceled: nota.status !== 'issued' })
+    return { pdf, number: nota.nfseNumber ?? accessKey }
+  }
 
   /**
    * The nota's PDF. `?download=1` is the panel's opt-in (D-18): it answers `attachment`, with the file named by the
@@ -158,6 +203,13 @@ export const createApp = ({ env, repo, gov, certificate, now = Date.now }: AppDe
   app.get('/v1/notas/:id/pdf', async (c) => {
     const id = c.req.param('id')
     const service = notas()
+    if (adn && ACCESS_KEY.test(id) && !(await service.get(id))) {
+      const found = await adnPdf(id)
+      if (!found) return c.json({ error: 'nota not found' }, 404)
+      const number = found.number.replace(/[^0-9A-Za-z-]/g, '') || 'nota'
+      const disposition = c.req.query('download') === '1' ? 'attachment' : 'inline'
+      return new Response(found.pdf, { headers: { 'content-type': 'application/pdf', 'content-disposition': `${disposition}; filename="nfse-${number}.pdf"` } })
+    }
     const pdf = await service.pdf(id)
     if (!pdf) return c.json({ error: 'nota not issued' }, 404)
     if (c.req.query('download') === '1') {

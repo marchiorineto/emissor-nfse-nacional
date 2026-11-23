@@ -75,7 +75,6 @@ const createFakeGov = () => {
         const found = [...byDpsId.values()].find((issued) => issued.accessKey === key)
         return found ? ok(200, { nfseXml: found.nfseXml }) : ok(404, {})
       }
-      if (path.startsWith('/danfse/')) return ok(200, { pdfB64: btoa('%PDF-1.4') })
       return ok(404, {})
     },
   }
@@ -260,20 +259,23 @@ describe('cancel', () => {
 })
 
 describe('pdf', () => {
-  it('renders the PDF from the XML when the government DANFSe service is down', async () => {
+  it('renders the PDF from the authorized XML, without asking the government', async () => {
     const repo = createMemoryRepo()
     const fake = createFakeGov()
-    const gov: Gov = { ...fake.gov, get: async (host, path) => (path.startsWith('/danfse/') ? ok(503, { raw: 'No server is available' }) : fake.gov.get(host, path)) }
+    const paths: string[] = []
+    const gov: Gov = { ...fake.gov, get: async (host, path) => (paths.push(path), fake.gov.get(host, path)) }
     const notas = createNotas({ repo, gov, config, now: () => new Date('2026-11-12T15:00:00Z') })
     await notas.issue(request())
     const pdf = await notas.pdf('pedido:1001')
     expect(new TextDecoder().decode((pdf ?? new Uint8Array()).slice(0, 5))).toBe('%PDF-')
+    expect(paths.filter((path) => path.includes('danfse'))).toEqual([])
   })
 
-  it('returns the DANFSe of an issued nota', async () => {
-    const { notas } = setup()
+  it('answers 502 for an issued nota whose XML was never stored', async () => {
+    const { notas, repo } = setup()
     await notas.issue(request())
-    const pdf = await notas.pdf('pedido:1001')
-    expect(new TextDecoder().decode(pdf ?? new Uint8Array())).toBe('%PDF-1.4')
+    const nota = await repo.get('pedido:1001')
+    await repo.save({ ...nota!, nfseXml: undefined })
+    await expect(notas.pdf('pedido:1001')).rejects.toMatchObject({ status: 502 })
   })
 })

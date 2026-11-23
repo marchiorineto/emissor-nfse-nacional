@@ -51,7 +51,7 @@ describe('sqlite repo', () => {
     const path = join(mkdtempSync(join(tmpdir(), 'nfse-repo-')), 'nfse.db')
     openDatabase(path).close()
     const db = openDatabase(path)
-    expect(db.prepare('SELECT name FROM d1_migrations').all().map((row) => row.name)).toEqual(['0001_init.sql'])
+    expect(db.prepare('SELECT name FROM d1_migrations').all().map((row) => row.name)).toEqual(['0001_init.sql', '0002_adn.sql'])
   })
 
   it('opens a database exported from D1 without its migrations table as already migrated', async () => {
